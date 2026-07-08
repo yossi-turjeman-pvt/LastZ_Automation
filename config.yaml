@@ -1,0 +1,250 @@
+game:
+  process_name: Survival.exe
+paths:
+  templates_dir: templates/active
+  logs_dir: logs
+thresholds:
+  claim_all: 0.82
+  claim_button: 0.72
+  orange_icon: 0.82
+  drone_gift_chest: 0.58
+  drone_claim_btn: 0.55
+  drone_collect_btn: 0.55
+  hq_world_button: 0.7
+  wilderness_hq_button: 0.85
+  hq_resource_food: 0.65
+  hq_resource_wood: 0.68
+  hq_resource_energy: 0.65
+  hq_resource_gold: 0.65
+  hq_resource_exp: 0.68
+  alliance_shield: 0.7
+  alliance_gifts: 0.7
+  rare_tab: 0.65
+  scout_action_btn: 0.7
+  wilderness_enemy_hq: 0.65
+  drone_slot_idle: 0.7
+  drone_slot_busy: 0.7
+  mail_icon: 0.7
+  scout_mail_header: 0.65
+watcher:
+  scan_interval_sec: 60
+  alliance_interval_sec: 180
+  drone_gift_interval_sec: 600
+  hq_resources_interval_sec: 150
+  hq_resources_confirm_sec: 120
+drone_gift:
+  min_duration: 08:00:00
+  timer_crop_offset:
+  - -77
+  - 8
+  - 150
+  - 28
+  modal_timer_region:
+  - 1200
+  - 730
+  - 1200
+  - 130
+coordinates:
+  dismiss_outside:
+  - 100
+  - 300
+  battle_rewards_offset:
+  - 20
+  - -10
+hq_resources:
+  state_file: logs/hq_resources_state.json
+  min_icons_per_type: 1
+  dedupe_radius_px: 80
+  map_drag_origin:
+  - 0.5
+  - 0.35
+  pan_swipes:
+  - - 0
+    - -200
+  - - 200
+    - 0
+  - - 0
+    - 200
+  - - -200
+    - 0
+  pan_settle_sec: 1.0
+  hud_exclude:
+    top_frac: 0.08
+    bottom_frac: 0.12
+    left_frac: 0.02
+    right_frac: 0.07
+  count_crop_offset:
+    food:
+    - -55
+    - 20
+    - 120
+    - 36
+    wood:
+    - -55
+    - 20
+    - 120
+    - 36
+    energy:
+    - -55
+    - 20
+    - 120
+    - 36
+    gold:
+    - -55
+    - 20
+    - 120
+    - 36
+    exp:
+    - -55
+    - 20
+    - 120
+    - 36
+scouting:
+  flow: city_sweep
+  own_alliance: VLNZ
+  alliance_blacklist:
+  - f694
+  - STDH
+  - VS33
+  - 100S
+  - DaWN
+  - EGIR
+  - cLNs
+  - DuSK
+  max_hq_level: 24
+  max_power: 40000
+  max_parallel_drones: 3
+  poll_interval_sec: 5
+  pan_settle_sec: 1.2
+  modal_settle_sec: 1.5
+  rescout_cooldown_sec: 3600
+  skip_already_scouted: true
+  scout_on_ocr_failure: false
+  house_icon_threshold: 0.62
+  house_icon_thresholds:
+    blue: 0.68
+    grey: 0.68
+    grey2: 0.72
+    purple: 0.74
+  house_click_settle_sec: 2.0
+  map_drag_origin:
+  - 0.5
+  - 0.45
+  zoom:
+    origin:
+    - 0.5
+    - 0.45
+    out_steps: 10
+    depart_out_steps: 10
+    server_overview_out_steps: 6
+    server_overview_max_rounds: 6
+    server_overview_min_cities: 3
+    return_overview_out_steps: 8
+    city_zoom_in_max_steps: 10
+    city_zoom_in_per_step: 2
+    city_zoom_in_bootstrap_steps: 8
+    hq_label_min_count: 1
+    strategic_out_steps: 6
+    in_steps: 6
+    out_delta_per_step: -4
+    in_delta_per_step: 4
+    travel_out_steps: 6
+    travel_in_steps: 5
+    step_delay_sec: 0.3
+    settle_sec: 1.8
+  travel:
+    sector_pans:
+    - - 0
+      - -600
+    - - 600
+      - 0
+    - - 0
+      - 600
+    - - -600
+      - 0
+    - - 500
+      - -500
+    - - -500
+      - -500
+    - - -500
+      - 500
+    - - 500
+      - 500
+  scan:
+    steps_per_sector: 6
+    ocr_tile_px: 320
+    ocr_stride_px: 160
+    hq_ocr_tile_px: 200
+    hq_ocr_stride_px: 90
+    pan_swipes:
+    - - 0
+      - -180
+    - - 180
+      - 0
+    - - 0
+      - 180
+    - - -180
+      - 0
+    - - 0
+      - -180
+    - - -180
+      - 0
+  hud_exclude:
+    top_frac: 0.1
+    bottom_frac: 0.14
+    left_frac: 0.08
+    right_frac: 0.1
+  pan_rings:
+  - - - 0
+      - -120
+    - - 120
+      - 0
+    - - 0
+      - 120
+    - - -120
+      - 0
+  - - - 0
+      - -240
+    - - 240
+      - 0
+    - - 0
+      - 240
+    - - -240
+      - 0
+  hq_click_offset:
+  - 0
+  - 40
+  city_click_offset:
+  - 0
+  - 0
+  city_click_settle_sec: 3.0
+  name_label_crop_offset:
+  - -90
+  - -55
+  - 220
+  - 70
+  modal_alliance_crop:
+  - 1328
+  - 600
+  - 550
+  - 50
+  modal_power_crop:
+  - 1328
+  - 518
+  - 600
+  - 55
+  modal_header_crop:
+  - 1248
+  - 360
+  - 700
+  - 55
+  state_file: logs/scouting_state.json
+  report_file: logs/scouting_report.md
+  run_log_file: logs/scouting_run.log
+  intel_file: logs/scouting_intel.json
+  reference_power: 98000
+  attack_score:
+    weight_resources: 0.4
+    weight_power_ratio: 0.3
+    weight_distance: 0.2
+    weight_hq_level: 0.1

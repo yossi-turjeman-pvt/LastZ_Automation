@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+logs/
+/tmp/game_screen*.png
+.DS_Store
