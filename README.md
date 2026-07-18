@@ -1,20 +1,23 @@
 # LastZ Automation
 
-macOS automation for LastZ (Survival.exe) — claims Alliance Gifts, Battle Rewards, collects HQ building resources, and runs a background watcher daemon so you never miss a reward.
+macOS automation for **LastZ** (`Survival.exe`) that claims **Alliance Gifts** (Common + Rare) on a timer.
+
+It works at the OS level only: screen capture + synthetic mouse clicks. It does not modify game files or talk to game servers.
 
 ## Quick Start
 
 ### Prerequisites
 
-- macOS with a Retina display (or set `retina_scale: 1.0` in `config.yaml` for non-Retina)
+- macOS 12+ (Monterey or later)
 - Python 3.10+
-- Survival.exe running and visible on screen
-- Tesseract OCR installed (required for Flows 4 & 5): `brew install tesseract`
-- macOS permissions granted (see [docs/SETUP.md](docs/SETUP.md))
+- LastZ running and visible (`Survival.exe` — native or via CrossOver / Wine)
+- macOS **Accessibility** and **Screen Recording** permissions for your terminal (see [docs/SETUP.md](docs/SETUP.md))
 
 ### Install
 
 ```bash
+git clone <your-repo-url> LastZ_Automation
+cd LastZ_Automation
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -23,64 +26,75 @@ pip install -r requirements.txt
 ### Run
 
 ```bash
-source .venv/bin/activate   # if not already active
+source .venv/bin/activate
 python -m lastz
 ```
 
-## Menu Options
+Equivalent entry points:
 
-| # | Name | Description |
-|---|------|-------------|
-| 1 | Alliance Gifts | Claims Common and Rare gifts from the Alliance Gifts window |
-| 2 | Battle Rewards | Detects the orange chest badge and claims Battle Rewards |
-| 3 | Drone Gift | Collects the HQ Area Exploration idle reward when timer >= 8h |
-| 4 | HQ Resources | Scans all HQ buildings; collects resource types ready at capacity |
-| 5 | HQ Resources (Dry Run) | Same scan but logs would-be clicks without executing them |
-| 6 | Full Loop | Runs all flows in sequence |
-| 7 | Watcher | Starts the background daemon (HQ Resources every 2.5 min, Drone Gift every 5 min) |
-| 8 | Exit | Quit |
-
-## Project Structure
-
+```bash
+python lastz_auto_master.py   # same as python -m lastz
+python lastz_watcher.py       # start the watcher loop directly
 ```
-LastZ_Automation/
-├── lastz/              ← Python package (all production code)
-│   ├── config.py       ← Config loader (reads config.yaml)
-│   ├── input.py        ← click(), drag(), focus_game()
-│   ├── screen.py       ← screencapture + Retina scaling
-│   ├── vision.py       ← Template matching (single + multi + cluster)
-│   ├── ocr.py          ← Timer and resource count OCR
-│   ├── watcher.py      ← Background daemon (HQ session batching)
-│   ├── cli.py          ← Interactive menu
-│   └── flows/          ← One file per game flow
-│       ├── hq_nav.py   ← Shared HQ ↔ Wilderness navigation
-│       └── hq_resources.py ← Flow 5 — building resource collection
-├── templates/
-│   ├── active/         ← Templates used by production flows
-│   └── archive/        ← Intermediate R&D crops (reference only)
-├── scripts/
-│   ├── dev/            ← Reusable template-authoring and diagnostic tools
-│   └── archive/        ← One-off experiments (kept for reference)
-├── tests/              ← Unit + verification tests
-├── logs/               ← watcher.log, hq_resources_state.json (gitignored)
-├── docs/               ← Full documentation
-└── config.yaml         ← All tunables (coordinates, thresholds, intervals)
-```
+
+## Menu
+
+| # | Option | What it does |
+|---|--------|----------------|
+| 1 | Claim Alliance Gifts (once) | One full Common + Rare claim pass |
+| 2 | Watcher loop | Repeats Alliance Gifts every `alliance_interval_sec` (default **180s**) |
+| 3 | Exit | Quit |
 
 ## Configuration
 
-All coordinates, thresholds, and timing are in `config.yaml`. Edit this file to tune the automation without touching flow code.
+All tunables live in [`config.yaml`](config.yaml):
+
+| Key | Purpose |
+|-----|---------|
+| `game.process_name` | Process to focus (default `Survival.exe`) |
+| `paths.templates_dir` | Template folder (default `templates/active`) |
+| `watcher.alliance_interval_sec` | Seconds between watcher claim runs |
+| `thresholds.*` | OpenCV match confidence cutoffs |
+| `coordinates.dismiss_outside` | Window-relative click used to close overlays |
+
+Example:
+
+```yaml
+watcher:
+  alliance_interval_sec: 180
+```
+
+## Project layout
+
+```
+LastZ_Automation/
+├── config.yaml              # Thresholds, intervals, process name
+├── requirements.txt         # Python deps
+├── lastz/                   # Package
+│   ├── cli.py               # Interactive menu
+│   ├── watcher.py           # Timed Alliance Gifts loop
+│   ├── config.py            # Loads config.yaml
+│   ├── input.py             # Focus + click
+│   ├── screen.py            # screencapture + coordinate mapping
+│   ├── vision.py            # Template matching
+│   └── flows/
+│       ├── alliance_gifts.py
+│       └── base.py
+├── templates/active/        # Templates used by the bot (required)
+├── docs/                    # Setup + architecture + flow notes
+└── tests/                   # Unit / verification helpers
+```
+
+Production templates are only under **`templates/active/`**. Other PNGs under `templates/` (if present) are leftovers and are not used at runtime.
 
 ## Documentation
 
 | Doc | Contents |
 |-----|----------|
-| [docs/SETUP.md](docs/SETUP.md) | macOS permissions, display requirements, troubleshooting |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the input/vision pipeline works, Retina scaling |
-| [docs/FLOWS.md](docs/FLOWS.md) | Step-by-step walkthrough of each flow |
-| [docs/TEMPLATES.md](docs/TEMPLATES.md) | Active templates, how they were made, how to add new ones |
-| [docs/ADDING_FLOWS.md](docs/ADDING_FLOWS.md) | Playbook for adding new game flows (e.g. HQ Patrol) |
+| [docs/SETUP.md](docs/SETUP.md) | Permissions, install checks, troubleshooting |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How capture / vision / clicks work |
+| [docs/FLOWS.md](docs/FLOWS.md) | Alliance Gifts step-by-step |
 
 ## Disclaimer
 
-This tool automates in-game actions. Using automation software may violate the game's Terms of Service. Use at your own risk.
+This tool automates in-game actions. Using automation may violate the game's Terms of Service. Use at your own risk.

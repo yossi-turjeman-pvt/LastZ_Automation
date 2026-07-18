@@ -9,9 +9,34 @@ from lastz.config import threshold as cfg_threshold
 from lastz.flows.base import dismiss_overlay, reset_ui
 from lastz.input import click, ensure_game_running, focus_game
 from lastz.screen import capture, physical_to_logical
-from lastz.vision import click_template, find_any, find_template
+from lastz.vision import click_template, find_all_templates, find_any
 
 _MAX_INDIVIDUAL_CLAIMS = 15
+# Gift-list Claim buttons sit above the modal footer (back / trash / notifications).
+# Matches below this Y fraction are the back icon area — ignore them; outside dismiss closes.
+_CLAIM_MAX_Y_FRAC = 0.52
+
+
+def _find_list_claim_button(screen):
+    """Best Claim button in the gift list; None if only footer/back-icon matches remain."""
+    matches = find_all_templates(
+        screen,
+        "claim_button_clean.png",
+        cfg_threshold("claim_button"),
+    )
+    if not matches:
+        return None
+
+    max_y = screen.shape[0] * _CLAIM_MAX_Y_FRAC
+    list_matches = [m for m in matches if m.phys_y <= max_y]
+    if not list_matches:
+        best = matches[0]
+        print(
+            f"-> No list Claim buttons left "
+            f"(best match in footer/back area y={best.phys_y:.0f}, conf={best.confidence:.4f}) — stopping"
+        )
+        return None
+    return list_matches[0]
 
 
 def _claim_tab(is_common: bool) -> str:
@@ -33,7 +58,7 @@ def _claim_tab(is_common: bool) -> str:
     claimed = 0
     for _ in range(_MAX_INDIVIDUAL_CLAIMS):
         screen = capture()
-        m = find_template(screen, "claim_button_clean.png", cfg_threshold("claim_button"))
+        m = _find_list_claim_button(screen)
         if m is None:
             break
         lx, ly = physical_to_logical(m.phys_x, m.phys_y)

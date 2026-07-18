@@ -1,108 +1,92 @@
 # Setup Guide
 
-## 1. System Requirements
+## 1. System requirements
 
 - macOS 12 (Monterey) or later
 - Python 3.10+
-- Retina display (2560×1600 or higher). If you have a non-Retina display, set `retina_scale: 1.0` in `config.yaml`.
-- Survival.exe must be running, visible, and not minimised when you trigger a flow.
+- LastZ (`Survival.exe`) running, visible, and not minimized
+- Game may run natively or through CrossOver / Wine — the process name must still match `config.yaml` (default `Survival.exe`)
 
-## 2. Python Dependencies
+No Tesseract / OCR install is required. Alliance Gifts uses template matching only.
+
+## 2. Install Python dependencies
 
 From the project root:
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-This installs: `opencv-python`, `numpy`, `Pillow`, `PyYAML`, `pytesseract`.
+This installs: `opencv-python`, `numpy`, `Pillow`, `PyYAML`.
 
-### Tesseract OCR (required for Flow 4 — Drone Gift, and Flow 5 — HQ Resources)
+## 3. macOS permissions
 
-`pytesseract` is a Python wrapper around the Tesseract OCR engine. Install the engine itself with Homebrew:
+### Accessibility (mouse clicks)
 
-```bash
-brew install tesseract
-```
-
-Flow 4 uses OCR to read the `HH:MM:SS` exploration timer. Flow 5 uses OCR to read resource count labels ("1.3K", "291", etc.) from the floating building badges. If Tesseract is not installed, both flows will skip collection safely rather than crashing.
-
-## 3. macOS Permissions
-
-The automation uses two system APIs that require explicit permission grants.
-
-### Accessibility (for mouse clicks)
-
-The script sends synthetic mouse events via CoreGraphics. macOS blocks this unless the calling process has Accessibility permission.
+The bot posts synthetic mouse events via CoreGraphics.
 
 1. Open **System Settings → Privacy & Security → Accessibility**
-2. Click the **+** button and add your terminal app (Terminal, iTerm2, or the app you use to run Python)
-3. Make sure the toggle is **on**
+2. Add your terminal app (Terminal, iTerm2, Cursor, etc.)
+3. Ensure the toggle is **on**
 
-### Screen Recording (for screencapture)
-
-The script captures the screen with `screencapture -x`. macOS requires Screen Recording permission for this.
+### Screen Recording (`screencapture`)
 
 1. Open **System Settings → Privacy & Security → Screen Recording**
-2. Add your terminal app and toggle it **on**
-3. Restart your terminal after granting this permission
+2. Add the same terminal app and toggle it **on**
+3. Quit and reopen the terminal after granting permission
 
-## 4. Verify Your Setup
+## 4. Verify setup
 
-Run a quick sanity check before using the automation for the first time:
+With the game visible on screen:
 
 ```bash
+source .venv/bin/activate
 python -m lastz
 ```
 
-Choose option **1** (Alliance Gifts). Watch the game window — the Alliance menu should open and the automation should navigate to the Gifts window. If nothing happens:
+Choose **1** (Claim Alliance Gifts once). You should see:
 
-- Check that the game window is visible and not behind other windows
-- Check that the process name in `config.yaml` matches what appears in Activity Monitor (default: `Survival.exe`)
-- Check that both Accessibility and Screen Recording permissions are granted for your terminal
+1. UI reset clicks
+2. Alliance menu open
+3. Alliance Gifts open
+4. Common tab claim (Claim All when available)
+5. Rare tab claim
+6. Two outside clicks to close Gifts, then Alliance
 
-## 5. Display Calibration
+If nothing happens:
 
-The automation uses fixed logical coordinates (e.g. the Alliance menu button is at `[1480, 757]`). These were calibrated on a specific screen layout. If buttons are not being hit:
+- Confirm `Survival.exe` appears in Activity Monitor (or update `game.process_name` in `config.yaml`)
+- Confirm the game window is frontmost and not covered
+- Re-check Accessibility + Screen Recording for the exact app launching Python
 
-1. Capture a screenshot: `screencapture -x /tmp/test.png`
-2. Open it in Preview and hover over the button you want to calibrate
-3. Note the pixel coordinates shown in the status bar (these are physical pixels)
-4. Divide by `retina_scale` (default `2.0`) to get the logical coordinate
-5. Update `config.yaml` under `coordinates:`
+## 5. Display / template matching
 
-## 6. Calibrating HQ Resource Templates (Flow 5)
+Navigation is **template-based**, not fixed absolute coordinates. On first match, `lastz/vision.py` auto-calibrates template scale using the HQ ↔ Wilderness map buttons (`wilderness_hq_button.png` / `hq_world_button.png`).
 
-After first install, run the verification script to confirm template confidence on your display:
+If match confidence is consistently low:
 
-```bash
-python3 scripts/dev/verify_hq_resource_templates.py
-```
+1. Leave the game on the wilderness/base map (no modal open)
+2. Confirm those two anchor templates still look like the on-screen buttons
+3. Re-crop replacements into `templates/active/` at the same filenames if the UI changed
+4. Tune thresholds in `config.yaml` under `thresholds:`
 
-If confidence is below 0.60 for icons that are clearly visible, re-extract the templates from a live screenshot:
+The only fixed click offset is `coordinates.dismiss_outside` — a logical offset from the **game window top-left**, used to dismiss overlays by clicking empty map area.
 
-```bash
-screencapture -x ~/Downloads/hq_ref.png   # while game is in HQ with icons visible
-# Edit CROPS in scripts/dev/extract_hq_resource_templates.py with new coordinates
-python3 scripts/dev/extract_hq_resource_templates.py
-```
+## 6. Watcher loop
 
-If OCR reads wrong values, run the diagnosis script:
+Menu option **2** (or `python lastz_watcher.py`) runs Alliance Gifts every `watcher.alliance_interval_sec` seconds (default 180). Logs append to `logs/watcher.log` (gitignored).
 
-```bash
-python3 scripts/dev/diagnose_hq_resource_ocr.py
-```
-
-Review the `logs/debug/hq_resources/*_proc.png` images and adjust `count_crop_offset` in `config.yaml`.
+Stop with `Ctrl+C`.
 
 ## 7. Troubleshooting
 
-| Symptom | Likely Cause | Fix |
-|---------|-------------|-----|
-| Game window does not focus | Wrong process name | Check Activity Monitor for the exact process name and update `config.yaml` |
-| Clicks land in wrong spot | Retina scale mismatch | Adjust `retina_scale` in `config.yaml` or recalibrate coordinates |
-| Template match confidence very low | Game UI changed or wrong resolution | Recapture and re-crop the template (see `docs/TEMPLATES.md`) |
-| HQ Resources never collects | Low template confidence or OCR failures | Run verify and diagnose scripts; check `logs/hq_resources_state.json` |
-| HQ Resources collects too early | Confirm interval too short | Raise `watcher.hq_resources_confirm_sec` in `config.yaml` |
-| OpenCV assertion error in watcher | Template file larger than screen image | This is guarded in `lastz/vision.py`; check that the template file is not corrupted |
-| No Screen Recording permission dialog | Terminal was never shown the dialog | Grant permission manually via System Settings |
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `GameNotRunningError` / won't focus | Wrong process name | Check Activity Monitor; update `game.process_name` |
+| Clicks miss buttons | Scale / window layout mismatch | Keep game full-visible; let auto-scale run on wilderness map; re-crop templates if UI changed |
+| Alliance / Gifts not found | Template mismatch | Recapture `alliance_shield_clean.png` / `alliance_gifts_precise.png` into `templates/active/` |
+| Rare tab claims click footer/back | Older code without footer filter | Current code ignores claim matches below 52% screen height; update to latest |
+| Screen capture fails / blank | Missing Screen Recording permission | Grant permission and restart terminal |
+| Clicks do nothing | Missing Accessibility permission | Grant permission and restart terminal |

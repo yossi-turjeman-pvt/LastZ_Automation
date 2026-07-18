@@ -1,6 +1,25 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
 .venv/
+venv/
+
+# Test / tool caches
+.pytest_cache/
+.benchmarks/
+
+# Runtime output
 logs/
-/tmp/game_screen*.png
+*.log
+verification_results.txt
+
+# macOS / temp captures
 .DS_Store
+/tmp/game_screen*.png
+
+# Local native / experiment leftovers (not part of the bot)
+click_bin
+click.c
+native/
+slices/

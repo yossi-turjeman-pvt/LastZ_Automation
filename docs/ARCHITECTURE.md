@@ -2,162 +2,92 @@
 
 ## Overview
 
-The automation is a pure Python macOS script. It has no network dependency on the game and does not modify game files. It operates entirely at the OS input/output level:
+Pure Python macOS automation. No game-network dependency and no game-file modification. It only:
 
-- **Output**: reads the screen with `screencapture`
-- **Input**: posts synthetic mouse events via CoreGraphics
+- **Reads** the screen via `screencapture`
+- **Clicks** via CoreGraphics synthetic mouse events
 
 ```
 config.yaml
     │
     ▼
-lastz/config.py  ──────────────────────────────────────────────┐
-                                                                │
-lastz/screen.py         lastz/vision.py        lastz/input.py  │
-  screencapture()         find_template()         click()       │
-       │                       │                   │            │
-       │ numpy array           │ Match(x, y, conf) │            │
-       ▼                       ▼                   ▼            │
-  lastz/flows/alliance_gifts.py                                │
-  lastz/flows/battle_rewards.py  ◄──────────────────────────────┘
-  lastz/watcher.py
-  lastz/cli.py
+lastz/config.py
+    │
+    ├── lastz/screen.py   → capture, physical↔logical mapping
+    ├── lastz/vision.py   → template match (+ auto scale)
+    ├── lastz/input.py    → focus_game, click
+    │
+    ├── lastz/flows/alliance_gifts.py
+    ├── lastz/flows/base.py
+    ├── lastz/watcher.py
+    └── lastz/cli.py
 ```
 
-## Input Pipeline
+## Pipeline
 
-### 1. Game Focus (`lastz/input.py`)
+### 1. Focus (`lastz/input.py`)
 
-Before any flow runs, `focus_game()` brings `Survival.exe` to the foreground:
+`focus_game()` brings `Survival.exe` (or `game.process_name`) to the front with AppleScript / System Events, then briefly waits for the window to settle.
 
-```
-osascript -e 'tell application "System Events" to set frontmost of process "Survival.exe" to true'
-```
+### 2. Capture (`lastz/screen.py`)
 
-A 1.5 second sleep follows to let the OS animate the window transition.
+`capture()` / `capture_both()` run `screencapture` into a temp PNG and load it with OpenCV (grayscale for matching, color when needed).
 
-### 2. Screen Capture (`lastz/screen.py`)
+Coordinates from matching are in **capture pixels**. Clicks use **logical** screen coordinates. `physical_to_logical()` maps through the active display bounds and, when possible, the game window rect.
 
-`capture()` runs `screencapture -x /tmp/lastz_screen.png` and reads the result as a grayscale NumPy array.
+### 3. Template matching (`lastz/vision.py`)
 
-On a Retina display the captured image is at physical resolution (e.g. 3024×1964 on a 14" MacBook Pro). This is exactly 2× the logical screen coordinates used for clicks.
+`find_template()` / `find_all_templates()` use OpenCV `TM_CCOEFF_NORMED`.
 
-### 3. Template Matching (`lastz/vision.py`)
+Before matching, scale is calibrated from the display pixel ratio and refined against wilderness/HQ map-switcher anchors:
 
-`find_template()` uses OpenCV's `TM_CCOEFF_NORMED` (normalised cross-correlation). This is robust to minor brightness differences but sensitive to size changes — if the game window is resized, templates need to be recaptured.
+- `wilderness_hq_button.png`
+- `hq_world_button.png`
 
-**Size guard**: before calling `cv2.matchTemplate`, the module checks that the template dimensions are smaller than the screen. If not, it logs a warning and returns `None` instead of raising an OpenCV assertion (the root cause of the crash seen in earlier watcher logs).
+Templates larger than the screen are skipped safely (no OpenCV assertion crash).
 
-The function returns a `Match(phys_x, phys_y, confidence)` in physical pixel space, or `None` if no match exceeds the threshold.
+### 4. Click (`lastz/input.py`)
 
-### 4. Coordinate Conversion (`lastz/screen.py`)
+`click(x, y)` sends `MouseMoved` → `LeftMouseDown` → `LeftMouseUp` at logical coordinates.
 
-Physical pixel coordinates from template matching must be halved to get logical click coordinates on a Retina display:
+## Alliance Gifts flow
 
-```python
-logical_x = physical_x / retina_scale   # retina_scale = 2.0 by default
-logical_y = physical_y / retina_scale
-```
+See [FLOWS.md](FLOWS.md) for the step list. In short:
 
-This conversion is done inside each flow just before calling `click()`.
+1. `reset_ui` — outside clicks to clear overlays
+2. Open Alliance → Alliance Gifts (templates)
+3. Common tab — Claim All when present, else individual Claim buttons
+4. Rare tab — individual Claim buttons in the **gift list only** (footer / back-icon matches ignored)
+5. Outside dismiss ×2 — close Gifts, then Alliance
 
-### 5. Click (`lastz/input.py`)
-
-`click(x, y)` sends three CoreGraphics events at logical coordinates: `MouseMoved`, `LeftMouseDown`, `LeftMouseUp`, each separated by 150ms. This matches what human interaction looks like to the game's event loop.
-
-## Watcher Loop
+## Watcher loop
 
 ```
-┌─────────────────────────────────────────┐
-│          run_watcher_loop()             │
-│                                         │
-│  Every 60 seconds:                      │
-│  ┌────────────────────────────────────┐ │
-│  │ capture screen                    │ │
-│  │ find orange_icon_no_badge template │ │
-│  │  ├─ found → run_battle_rewards()  │ │
-│  │  └─ not found → skip              │ │
-│  └────────────────────────────────────┘ │
-│                                         │
-│  Every 180 seconds (3 minutes):         │
-│  ┌────────────────────────────────────┐ │
-│  │ run_alliance_gifts_flow()          │ │
-│  └────────────────────────────────────┘ │
-│                                         │
-│  Exception → log + retry in 10s        │
-│  KeyboardInterrupt → graceful exit     │
-└─────────────────────────────────────────┘
+run_watcher_loop()
+  loop forever:
+    ensure wilderness (click hq_world_button if in HQ)
+    run_alliance_gifts_flow()
+    sleep alliance_interval_sec   # default 180
 ```
 
-Both intervals are configurable in `config.yaml` under `watcher:`.
+KeyboardInterrupt exits cleanly. `GameNotRunningError` sleeps and retries. Other errors retry after 10s. Logs go to `logs/watcher.log`.
 
-## Config-Driven Design
+## Config-driven design
 
-All magic numbers — coordinates, thresholds, intervals, the game process name — live in `config.yaml`. No flow file contains a hardcoded pixel coordinate or a hardcoded path. This means:
+Paths, thresholds, intervals, process name, and dismiss offset live in `config.yaml`. `lastz/config.py` resolves `PROJECT_ROOT` from the package location so clones work from any directory.
 
-- Tuning for a different display or window size only requires editing one file
-- The project root is resolved from `Path(__file__).resolve().parent.parent` inside `lastz/config.py`, so the project works regardless of where it is cloned
+## File map
 
-## HQ Session Block (Flow 4 + Flow 5)
-
-Both the Drone Gift (Flow 4) and HQ Resource Collection (Flow 5) require navigating to the HQ base map, which means leaving the wilderness.  The watcher cannot call `_ensure_wilderness()` in the middle of a multi-step pan sweep.
-
-The watcher groups HQ flows into a single **HQ session block**:
-
-```
-Watcher loop:
-  ┌─ Wilderness phase (battle rewards + alliance gifts) ──┐
-  │  _ensure_wilderness()                                 │
-  │  scan/claim battle rewards                            │
-  │  run alliance gifts (if due)                          │
-  └───────────────────────────────────────────────────────┘
-  ┌─ HQ session phase (only when Flow 4 or 5 is due) ─────┐
-  │  navigate_to_hq() once                                │
-  │  run_hq_resources_flow() if interval elapsed          │
-  │  run_drone_gift_flow()   if interval elapsed          │
-  │  navigate_to_wilderness() in finally block            │
-  └───────────────────────────────────────────────────────┘
-```
-
-`_ensure_wilderness()` is NEVER called during an HQ session — doing so would abort a pan sweep mid-scan and break the two-pass state machine.
-
-## Multi-Match Vision (`find_all_templates`)
-
-`find_all_templates()` extends `find_template()` to return ALL occurrences:
-
-1. `cv2.matchTemplate` produces a full confidence heatmap
-2. All pixels above threshold are collected
-3. **Non-Maximum Suppression (NMS)** removes redundant overlapping boxes (IoU threshold 0.3)
-4. Optional **HUD exclusion mask** ignores bottom/top/side UI chrome where false positives arise
-5. Returns `list[MatchWithBBox]` sorted by confidence
-
-`cluster_matches()` deduplicates icons seen in overlapping pan frames by merging all detections within `dedupe_radius_px` physical pixels into one representative match (the highest-confidence one).
-
-## Map Panning (`drag()`)
-
-`drag(x1, y1, x2, y2)` in `lastz/input.py` sends:
-
-```
-MouseDown(x1,y1) → [N × MouseMoved(interpolated)] → MouseUp(x2,y2)
-```
-
-All in logical screen coordinates. The HQ base map responds to this as a touch-drag, scrolling the camera to reveal off-screen buildings.
-
-## File Responsibilities
-
-| File | Responsibility |
-|------|---------------|
-| `lastz/config.py` | Loads `config.yaml`, resolves `PROJECT_ROOT`, exposes typed accessors |
-| `lastz/input.py` | CoreGraphics `click()`, `drag()`, osascript focus |
-| `lastz/screen.py` | Screen capture, Retina scaling, temp file cleanup |
-| `lastz/vision.py` | `find_template()` (single), `find_all_templates()` + NMS (multi), `cluster_matches()` |
-| `lastz/ocr.py` | Timer OCR (`HH:MM:SS`) and resource count OCR (`1.3K`, `291`) |
-| `lastz/flows/base.py` | `reset_ui()`, `dismiss_overlay()` shared by all flows |
-| `lastz/flows/hq_nav.py` | `is_hq_mode()`, `navigate_to_hq()`, `navigate_to_wilderness()`, `run_in_hq()` context manager |
-| `lastz/flows/alliance_gifts.py` | Flows 1 & 2 logic |
-| `lastz/flows/battle_rewards.py` | Flow 3 logic |
-| `lastz/flows/drone_gift.py` | Flow 4 logic (imports nav from `hq_nav`) |
-| `lastz/flows/hq_resources.py` | Flow 5 logic — pan sweep, two-pass state machine, collect+verify |
-| `lastz/watcher.py` | Daemon loop, HQ session block, logging |
-| `lastz/cli.py` | Interactive menu (options 1–8) |
-| `lastz/__main__.py` | `python -m lastz` entry point |
+| File | Role |
+|------|------|
+| `lastz/config.py` | Load `config.yaml`, accessors |
+| `lastz/input.py` | Focus + click |
+| `lastz/screen.py` | Capture + coordinate mapping |
+| `lastz/vision.py` | Template matching / NMS / scale |
+| `lastz/flows/base.py` | `reset_ui`, `dismiss_overlay` |
+| `lastz/flows/alliance_gifts.py` | Alliance Gifts claim logic |
+| `lastz/watcher.py` | Timed claim loop |
+| `lastz/cli.py` | Menu (1–3) |
+| `lastz/__main__.py` | `python -m lastz` |
+| `lastz_auto_master.py` | Thin shim → `cli.main` |
+| `lastz_watcher.py` | Thin shim → watcher loop |

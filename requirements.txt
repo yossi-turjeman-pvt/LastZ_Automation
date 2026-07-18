@@ -1,5 +1,5 @@
+# Python 3.10+ — install with: pip install -r requirements.txt
 opencv-python>=4.8
 numpy>=1.24
 Pillow>=10.0
 PyYAML>=6.0
-pytesseract>=0.3.10

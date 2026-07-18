@@ -13,6 +13,12 @@ _uint32 = ctypes.c_uint32
 _int32 = ctypes.c_int32
 _void_p = ctypes.c_void_p
 
+
+class _CGPoint(ctypes.Structure):
+    _fields_ = [("x", _double), ("y", _double)]
+
+
+# Mouse events historically used two doubles (CGPoint ABI as separate args) — keep that.
 _cg.CGEventCreateMouseEvent.argtypes = [_void_p, _uint32, _double, _double, _uint32]
 _cg.CGEventCreateMouseEvent.restype = _void_p
 _cg.CGEventCreateScrollWheelEvent.argtypes = [
@@ -25,12 +31,17 @@ _cg.CGEventCreateScrollWheelEvent.argtypes = [
 _cg.CGEventCreateScrollWheelEvent.restype = _void_p
 _cg.CGEventPost.argtypes = [_uint32, _void_p]
 _cg.CGEventPost.restype = None
+_cg.CGEventSetLocation.argtypes = [_void_p, _CGPoint]
+_cg.CGEventSetLocation.restype = None
+_cg.CGWarpMouseCursorPosition.argtypes = [_CGPoint]
+_cg.CGWarpMouseCursorPosition.restype = None
 
 _kCGEventMouseMoved = 5
 _kCGEventLeftMouseDown = 1
 _kCGEventLeftMouseUp = 2
 _kCGHIDEventTap = 0
 _kCGScrollEventUnitLine = 1
+_kCGScrollEventUnitPixel = 0
 
 
 def click(x: float, y: float) -> None:
@@ -92,18 +103,26 @@ def scroll_wheel(x: float, y: float, delta_y: int, *, steps: int = 1, step_delay
     Scroll the mouse wheel at logical (x, y) to zoom/pan the world map.
 
     Negative delta_y zooms out; positive zooms in (game-dependent).
+
+    CrossOver/Wine needs the cursor actually at (x,y) AND the scroll event
+    location set — posting scroll without location often does nothing.
     """
+    pt = _CGPoint(float(x), float(y))
+    # Hard-warp cursor into the game map (MouseMoved alone is flaky under Wine)
+    _cg.CGWarpMouseCursorPosition(pt)
     move = _cg.CGEventCreateMouseEvent(None, _kCGEventMouseMoved, x, y, 0)
     _cg.CGEventPost(_kCGHIDEventTap, move)
-    time.sleep(0.1)
+    time.sleep(0.12)
 
     per_step = delta_y // steps if steps else delta_y
     remainder = delta_y - per_step * steps
     for i in range(steps):
         dy = per_step + (remainder if i == steps - 1 else 0)
+        # Try pixel units first (Wine/Unity), fall back path uses same API with larger dy
         event = _cg.CGEventCreateScrollWheelEvent(
-            None, _kCGScrollEventUnitLine, 2, _int32(dy), _int32(0)
+            None, _kCGScrollEventUnitPixel, 2, _int32(int(dy) * 20), _int32(0)
         )
+        _cg.CGEventSetLocation(event, pt)
         _cg.CGEventPost(_kCGHIDEventTap, event)
         time.sleep(step_delay)
 
@@ -116,9 +135,8 @@ class GameNotRunningError(RuntimeError):
 def is_game_running() -> bool:
     """Return True if the game process is currently running.
 
-    Uses osascript/System Events — the same subsystem as focus_game() — so the
-    process name lookup is consistent regardless of how macOS exposes it in the
-    Unix process table (where pgrep -x can fail for wrapped executables).
+    Prefer System Events (matches focus_game). Fall back to pgrep — CrossOver
+    wraps Survival.exe and System Events can flake under automation.
     """
     proc = game_process()
     result = subprocess.run(
@@ -127,7 +145,11 @@ def is_game_running() -> bool:
         capture_output=True,
         text=True,
     )
-    return result.stdout.strip() == "true"
+    if result.stdout.strip() == "true":
+        return True
+    # Fallback: CrossOver / Wine process table
+    pg = subprocess.run(["pgrep", "-fl", proc], capture_output=True, text=True)
+    return pg.returncode == 0 and bool(pg.stdout.strip())
 
 
 def ensure_game_running() -> None:

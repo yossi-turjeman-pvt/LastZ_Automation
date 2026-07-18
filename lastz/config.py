@@ -21,6 +21,13 @@ def load_config() -> dict:
     return _config
 
 
+def reload_config() -> dict:
+    """Force re-read config.yaml (clears in-process cache)."""
+    global _config
+    _config = None
+    return load_config()
+
+
 def templates_dir() -> Path:
     cfg = load_config()
     return PROJECT_ROOT / cfg["paths"]["templates_dir"]
@@ -56,7 +63,3 @@ def window_offset_click(name: str) -> tuple[float, float]:
 
 def watcher_cfg() -> dict:
     return load_config()["watcher"]
-
-
-def scouting_cfg() -> dict:
-    return load_config().get("scouting", {})
