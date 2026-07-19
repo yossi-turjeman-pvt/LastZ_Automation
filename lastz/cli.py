@@ -1,5 +1,5 @@
 """
-Interactive master menu — Alliance Gifts only.
+Interactive master menu — Alliance Gifts + CrossOver helpers.
 """
 import time
 
@@ -12,7 +12,8 @@ def _header() -> None:
     print("=" * 60)
     print(" 1. Claim Alliance Gifts (once)")
     print(" 2. Watcher loop (claim on interval)")
-    print(" 3. Exit")
+    print(" 3. Fix Hebrew (CrossOver bottle)")
+    print(" 4. Exit")
     print("=" * 60)
 
 
@@ -20,7 +21,7 @@ def main() -> None:
     while True:
         _header()
         try:
-            choice = input("Enter your choice (1-3): ").strip()
+            choice = input("Enter your choice (1-4): ").strip()
         except KeyboardInterrupt:
             print("\nExiting. Goodbye!")
             break
@@ -43,9 +44,15 @@ def main() -> None:
             run_watcher_loop()
 
         elif choice == "3":
+            print("\n>>> Fix Hebrew (CrossOver fonts + he_IL locale)...")
+            from lastz.crossover_hebrew import apply_hebrew_fix
+            apply_hebrew_fix()
+            print()
+
+        elif choice == "4":
             print("Exiting. Goodbye!")
             break
 
         else:
-            print("Invalid choice. Please enter a number between 1 and 3.")
+            print("Invalid choice. Please enter a number between 1 and 4.")
             time.sleep(1)

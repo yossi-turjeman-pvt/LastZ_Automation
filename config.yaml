@@ -5,6 +5,10 @@
 game:
   process_name: Survival.exe   # Activity Monitor / CrossOver process name
 
+# CrossOver bottle helpers (menu option 3 — Fix Hebrew)
+crossover:
+  bottle_name: "Last Z"        # ~/Library/Application Support/CrossOver/Bottles/<name>
+
 paths:
   templates_dir: templates/active
   logs_dir: logs

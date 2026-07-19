@@ -49,7 +49,8 @@ python lastz_watcher.py       # start the watcher loop directly
 |---|--------|----------------|
 | 1 | Claim Alliance Gifts (once) | Runs the full collection sequence once (see below) |
 | 2 | Watcher loop | Repeats that same sequence every `alliance_interval_sec` (default **180s**) |
-| 3 | Exit | Quit |
+| 3 | Fix Hebrew (CrossOver bottle) | Copies Hebrew fonts into the bottle + sets `LANG`/`LC_ALL=he_IL.UTF-8` (fixes `???` / RTL chat under CrossOver). Bottle name: `crossover.bottle_name` in `config.yaml`. Restart CrossOver after running. |
+| 4 | Exit | Quit |
 
 Menu **1** and **2** run the **same** flow. There are no separate menus for drone, battlefield, gifts, or techs.
 
