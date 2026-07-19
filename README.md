@@ -47,9 +47,43 @@ python lastz_watcher.py       # start the watcher loop directly
 
 | # | Option | What it does |
 |---|--------|----------------|
-| 1 | Claim Alliance Gifts (once) | HQ Drone (if ≥ 08:00:00) + Battlefield + Alliance Common/Rare + Techs |
-| 2 | Watcher loop | Repeats the same gifts flow every `alliance_interval_sec` (default **180s**) |
+| 1 | Claim Alliance Gifts (once) | Runs the full collection sequence once (see below) |
+| 2 | Watcher loop | Repeats that same sequence every `alliance_interval_sec` (default **180s**) |
 | 3 | Exit | Quit |
+
+Menu **1** and **2** run the **same** flow. There are no separate menus for drone, battlefield, gifts, or techs.
+
+### What menu 1 / 2 collects
+
+In order:
+
+1. **HQ Drone Gift (Area Exploration idle reward)**  
+   Goes to Headquarters, reads the timer under the gift chest, and collects only if duration ≥ `drone_gift.min_duration` (default **08:00:00**). Then returns to Wilderness. Skips if the chest is missing (cooldown), the timer is lower, or OCR fails.
+
+2. **Battlefield Gifts**  
+   If the orange wilderness chest icon is visible, opens it and Claim All. Skips if the icon is not on screen.
+
+3. **Alliance Gifts — Common**  
+   Opens Alliance → Alliance Gifts → Common tab. Uses **Claim All** when present (one outside click to clear the reward popup), otherwise individual green **Claim** buttons.
+
+4. **Alliance Gifts — Rare**  
+   Switches to the Rare tab and claims the same way (Claim All if present, else green Claims).
+
+5. **Alliance Techs — gold Donate**  
+   Opens Alliance Techs, picks a recommended tech (orange thumbs-up) or a lit hex, then clicks the **blue** Donate button until it is no longer blue / available (capped by `alliance_techs.max_donates`).
+
+### What it does **not** collect
+
+These are **out of scope** for the current bot (removed or never part of this slim flow):
+
+- Achievements / quest rewards / daily login calendars  
+- Bounties / wanted / hunt boards  
+- HQ building floating resources (food, wood, energy, gold, EXP pickups)  
+- Mail / inbox claims  
+- Scouting / exploration map loops (beyond the single HQ drone idle chest)  
+- Alliance Help, Wars, Shop, or other Alliance tiles  
+
+If something is not in the list above, assume it is **not** automated.
 
 ## Configuration
 
