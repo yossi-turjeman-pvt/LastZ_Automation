@@ -1,6 +1,6 @@
 # Flows
 
-## Gifts collection (HQ Drone + Battlefield + Alliance Gifts + Alliance Techs)
+## Gifts collection (HQ Drone + Battlefield + Alliance Gifts + Alliance Techs + Trucks)
 
 **Entry:** menu `1`, watcher loop (`2` / `lastz_watcher.py`), or `from lastz.flows.alliance_gifts import run_alliance_gifts_flow`.
 
@@ -21,6 +21,7 @@ One flow. Not a separate menu item. Clicks are full-dynamic (template centers + 
 11. **Alliance open check** — if grid tiles (`alliance_techs` / `alliance_gifts`) in mid band → stay; else re-open only via HUD shield in **right-stack** band (never center-screen FPs).
 12. **Alliance Techs** — microscope `alliance_techs.png` in grid band (label fallback only in-band); thumbs with **orange HSV + tree band** (ignores map help icons); else lit hex; **blue** Donate only.
 13. Dismiss Techs + Alliance.
+14. **Trucks** (if `trucks.include_trucks_flow`, default true) — left-HUD `trucks_icon.png` → My Truck → claim chest(s) → if trade &lt; 4/4 and upper slot has green `+`, open picker → refresh (tickets OK, capped by `max_refreshes`) until orange (or purple if `allow_purple_trucks`) → Go → **Escape** to Wilderness. Upper slot en route with no chest → leave it.
 
 ### Spatial bands (`lastz/flows/ui_bands.py`)
 
@@ -61,11 +62,21 @@ Writes annotated PNGs + `logs/debug/scout/report.md`. Flow debug clicks also dum
 | `tech_hex_active.png` | Lit hex fallback |
 | `donate_blue.png` | Blue gold Donate only |
 | `hq_world_button.png` / `wilderness_hq_button.png` | Map mode (HQ ↔ Wilderness) |
+| `trucks_icon.png` | Left-HUD trucks entry |
+| `trucks_my_truck_tab.png` | My Truck tab |
+| `trucks_claim_chest.png` | Arrived truck claim chest |
+| `trucks_slot_plus.png` | Empty slot green `+` |
+| `trucks_refresh.png` | Picker refresh |
+| `trucks_go.png` | Picker Go |
+| `trucks_details_back.png` | Details modal back after claim |
 
 ### Config keys
 
-- Thresholds including `drone_gift_chest`, `alliance_techs`, `tech_thumbs_up` (0.78), `donate_blue`, …
+- Thresholds including `drone_gift_chest`, `alliance_techs`, `tech_thumbs_up` (0.78), `donate_blue`, `trucks_*`, …
 - `drone_gift.min_duration` / `timer_crop_offset` / `modal_timer_region`
 - `alliance_techs.max_donates`
+- `trucks.include_trucks_flow` / `allow_purple_trucks` / `max_refreshes`
 - `coordinates.dismiss_outside_frac`
 - `watcher.alliance_interval_sec`
+
+See README **Configuration flags** for the full table.

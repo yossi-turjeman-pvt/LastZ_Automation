@@ -12,7 +12,7 @@ def _header() -> None:
     print("=" * 60)
     print(" 1. Claim Alliance Gifts (once)")
     print(" 2. Watcher loop (claim on interval)")
-    print(" 3. Fix Hebrew (CrossOver bottle)")
+    print(" 3. Fix Hebrew (CrossOver) — one-time setup")
     print(" 4. Exit")
     print("=" * 60)
 
@@ -44,7 +44,7 @@ def main() -> None:
             run_watcher_loop()
 
         elif choice == "3":
-            print("\n>>> Fix Hebrew (CrossOver fonts + he_IL locale)...")
+            print("\n>>> Fix Hebrew (one-time CrossOver bottle setup)...")
             from lastz.crossover_hebrew import apply_hebrew_fix
             apply_hebrew_fix()
             print()

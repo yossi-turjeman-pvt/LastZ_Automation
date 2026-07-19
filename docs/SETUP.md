@@ -100,7 +100,13 @@ Menu option **2** (or `python lastz_watcher.py`) runs the gifts flow every `watc
 
 Stop with `Ctrl+C`.
 
-## 7. Troubleshooting
+## 7. CrossOver Hebrew chat (one-time)
+
+If LastZ runs under CrossOver and Hebrew chat shows as `???` or reversed letters, run menu **3** once (`Fix Hebrew`). Then fully quit and relaunch CrossOver.
+
+This is **bottle setup**, not part of gifts collection. Re-run only if you recreate the bottle. See the README section *Fix Hebrew (CrossOver) — run once*.
+
+## 8. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
@@ -111,3 +117,4 @@ Stop with `Ctrl+C`.
 | Screen capture fails / blank | Missing Screen Recording permission | Grant permission and restart terminal |
 | Clicks do nothing | Missing Accessibility permission | Grant permission and restart terminal |
 | Wrong display captured | Multi-monitor / game on secondary | Move game fully onto one screen |
+| Hebrew chat is `???` / reversed (CrossOver) | Bottle missing fonts / locale | Menu **3** once, then restart CrossOver (see §7) |

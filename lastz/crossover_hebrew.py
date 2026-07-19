@@ -168,7 +168,8 @@ def apply_hebrew_fix(*, bottle_name: str | None = None) -> int:
 
     print()
     print("Done. Fully quit CrossOver / the game, then relaunch the bottle.")
-    print("This sets Hebrew locale + fonts (fixes ??? and usually RTL for Hebrew chat).")
+    print("This is a one-time setup (fonts + he_IL locale). Re-run only if you")
+    print("recreate the bottle — not needed for normal day-to-day play.")
     return 0
 
 

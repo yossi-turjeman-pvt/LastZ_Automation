@@ -1,5 +1,5 @@
 """
-Gifts collection flow — HQ Drone + Battlefield + Alliance Gifts + Alliance Techs.
+Gifts collection flow — HQ Drone + Battlefield + Alliance Gifts + Alliance Techs + Trucks.
 
 Navigation uses template matching so clicks stay accurate on any display size.
 Spatial bands reject high-confidence false positives outside expected UI regions.
@@ -13,6 +13,7 @@ from lastz.config import load_config, threshold as cfg_threshold
 from lastz.debug_match import annotate_and_save, in_band
 from lastz.flows.base import dismiss_overlay, ensure_wilderness, reset_ui
 from lastz.flows.drone_gift import run_drone_gift_flow
+from lastz.flows.trucks import run_trucks_flow
 from lastz.flows.ui_bands import (
     BAND_ALLIANCE_GRID,
     BAND_HUD_SHIELD,
@@ -671,6 +672,16 @@ def run_alliance_gifts_flow(*, source: str = "menu") -> None:
 
         print("Closing Alliance Menu window...")
         dismiss_overlay(delay=3.0)
+
+        log_step("Trucks", "info", "start")
+        trucks_status = run_trucks_flow()
+        log(f"[Trucks] result: {trucks_status}")
+        if trucks_status.startswith("skipped"):
+            log_step("Trucks", "skip", trucks_status)
+        elif trucks_status.startswith("failed"):
+            log_step("Trucks", "fail", trucks_status)
+        else:
+            log_step("Trucks", "pass", trucks_status)
 
         log_step("Done", "pass", "gifts_collection_complete")
         print("Gifts collection flow complete!")

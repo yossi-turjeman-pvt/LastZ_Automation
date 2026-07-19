@@ -42,6 +42,10 @@ _kCGEventLeftMouseUp = 2
 _kCGHIDEventTap = 0
 _kCGScrollEventUnitLine = 1
 _kCGScrollEventUnitPixel = 0
+_KEY_ESCAPE = 53  # macOS virtual key code
+
+_cg.CGEventCreateKeyboardEvent.argtypes = [_void_p, _uint32, ctypes.c_bool]
+_cg.CGEventCreateKeyboardEvent.restype = _void_p
 
 
 def click(x: float, y: float) -> None:
@@ -55,6 +59,21 @@ def click(x: float, y: float) -> None:
     up = _cg.CGEventCreateMouseEvent(None, _kCGEventLeftMouseUp, x, y, 0)
     _cg.CGEventPost(_kCGHIDEventTap, up)
     time.sleep(0.15)
+
+
+def press_key(key_code: int) -> None:
+    """Post a key down/up for a macOS virtual key code."""
+    down = _cg.CGEventCreateKeyboardEvent(None, _uint32(key_code), True)
+    _cg.CGEventPost(_kCGHIDEventTap, down)
+    time.sleep(0.05)
+    up = _cg.CGEventCreateKeyboardEvent(None, _uint32(key_code), False)
+    _cg.CGEventPost(_kCGHIDEventTap, up)
+    time.sleep(0.1)
+
+
+def press_escape() -> None:
+    """Press Escape — closes Trucks UI and many overlays."""
+    press_key(_KEY_ESCAPE)
 
 
 def drag(

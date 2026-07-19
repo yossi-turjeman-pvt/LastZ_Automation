@@ -80,3 +80,13 @@ def window_offset_click(name: str = "dismiss_outside") -> tuple[float, float]:
 
 def watcher_cfg() -> dict:
     return load_config()["watcher"]
+
+
+def trucks_cfg() -> dict:
+    """Trucks flow toggles; defaults keep flow on and orange-only."""
+    cfg = load_config().get("trucks") or {}
+    return {
+        "include_trucks_flow": bool(cfg.get("include_trucks_flow", True)),
+        "allow_purple_trucks": bool(cfg.get("allow_purple_trucks", False)),
+        "max_refreshes": int(cfg.get("max_refreshes", 15)),
+    }

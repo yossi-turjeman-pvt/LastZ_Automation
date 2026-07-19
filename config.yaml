@@ -29,9 +29,22 @@ thresholds:
   drone_gift_chest: 0.58
   drone_claim_btn: 0.55
   drone_collect_btn: 0.55
+  trucks_icon: 0.72
+  trucks_my_truck_tab: 0.65
+  trucks_claim_chest: 0.70
+  trucks_slot_plus: 0.70
+  trucks_refresh: 0.70
+  trucks_go: 0.70
+  trucks_details_back: 0.70
 
 alliance_techs:
   max_donates: 20              # stop blue Donate loop after this many clicks
+
+# Placing trucks (end of menu 1 / watcher). Set include_trucks_flow: false to skip.
+trucks:
+  include_trucks_flow: true    # false = leave trucks fully manual
+  allow_purple_trucks: false   # true = accept purple; false = refresh for orange
+  max_refreshes: 15            # safety cap while hunting orange (ticket refreshes OK)
 
 drone_gift:
   min_duration: "08:00:00"     # collect only when Exploration Duration >= this
