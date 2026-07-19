@@ -1,6 +1,8 @@
 # LastZ Automation
 
-macOS automation for **LastZ** (`Survival.exe`) that claims **gifts** on a timer: Battlefield chest + Alliance Gifts (Common + Rare).
+macOS automation for **LastZ** (`Survival.exe`) that runs a **gifts collection** flow on a timer: Battlefield chest + Alliance Gifts (Common + Rare) + Alliance Techs gold donations.
+
+Vision uses **spatial bands** so high-confidence false positives (map help thumbs, Wars chrome, wrong shield hits) are rejected. Observe-only scout (no Claim/Donate): `python -m lastz.flows.vision_scout`.
 
 It works at the OS level only: screen capture + synthetic mouse clicks. It does not modify game files or talk to game servers.
 
@@ -43,7 +45,7 @@ python lastz_watcher.py       # start the watcher loop directly
 
 | # | Option | What it does |
 |---|--------|----------------|
-| 1 | Claim Alliance Gifts (once) | Battlefield chest (if present) + Alliance Common/Rare |
+| 1 | Claim Alliance Gifts (once) | Battlefield + Alliance Common/Rare + Techs (blue Donate) |
 | 2 | Watcher loop | Repeats the same gifts flow every `alliance_interval_sec` (default **180s**) |
 | 3 | Exit | Quit |
 
@@ -97,7 +99,7 @@ Production templates are only under **`templates/active/`**.
 |-----|----------|
 | [docs/SETUP.md](docs/SETUP.md) | Permissions, install checks, troubleshooting |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How capture / vision / clicks work |
-| [docs/FLOWS.md](docs/FLOWS.md) | Alliance Gifts step-by-step |
+| [docs/FLOWS.md](docs/FLOWS.md) | Gifts collection step-by-step (Battlefield + Gifts + Techs) |
 
 ## Disclaimer
 

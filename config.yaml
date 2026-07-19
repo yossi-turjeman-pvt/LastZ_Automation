@@ -15,8 +15,15 @@ thresholds:
   orange_icon: 0.82            # Battlefield Gifts chest on wilderness map
   alliance_shield: 0.7
   alliance_gifts: 0.7
-  rare_tab: 0.65
+  rare_tab: 0.78
+  alliance_techs: 0.7
+  tech_thumbs_up: 0.78
+  tech_hex_active: 0.65
+  donate_blue: 0.75
   hq_world_button: 0.7         # watcher: detect HQ mode to return to wilderness
+
+alliance_techs:
+  max_donates: 20              # stop blue Donate loop after this many clicks
 
 watcher:
   alliance_interval_sec: 180   # seconds between claim runs in menu option 2

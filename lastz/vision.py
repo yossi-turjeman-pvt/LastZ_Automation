@@ -153,11 +153,21 @@ def _ensure_scale_calibrated(screen: np.ndarray) -> None:
                 best_anchor = tpl_name
 
     if best_conf >= _ACCEPT_CONF:
-        _scale_center = _clamp_scale(best_scale)
-        print(
-            f"[vision] Auto template scale: {_scale_center:.3f} "
-            f"(anchor={best_anchor} conf={best_conf:.4f})"
-        )
+        # Modals hide HUD anchors and can invent a bogus scale peak (e.g. 0.40).
+        # Prefer the pixel-ratio expectation unless the anchor is clearly strong.
+        if abs(best_scale - expected) > 0.15 and best_conf < 0.92:
+            _scale_center = expected
+            print(
+                f"[vision] Auto template scale: {_scale_center:.3f} "
+                f"(expected; rejected dubious {best_scale:.3f} "
+                f"anchor={best_anchor} conf={best_conf:.4f})"
+            )
+        else:
+            _scale_center = _clamp_scale(best_scale)
+            print(
+                f"[vision] Auto template scale: {_scale_center:.3f} "
+                f"(anchor={best_anchor} conf={best_conf:.4f})"
+            )
     else:
         _scale_center = expected
         print(
@@ -170,7 +180,11 @@ def _ensure_scale_calibrated(screen: np.ndarray) -> None:
 
 
 def template_scales() -> list[float]:
-    return _local_scale_band(_scale_center)
+    # Always include 1.0 so a stuck bad center still finds Retina templates.
+    scales = set(_local_scale_band(_scale_center))
+    scales.add(1.0)
+    scales.add(round(_scale_center, 3))
+    return sorted(scales)
 
 
 def _match_at_scales(
@@ -220,8 +234,9 @@ def find_template(
 
     best = _match_at_scales(roi, tpl, search_scales)
 
-    # Coarse full-band re-search if local band misses (stuck scale lock)
-    if (best is None or best.confidence < threshold) and scales is None:
+    # Coarse full-band re-search if local band misses (stuck scale lock).
+    needs_refine = (best is None or best.confidence < threshold) and scales is None
+    if needs_refine:
         coarse = _match_at_scales(roi, tpl, _full_scale_band())
         if coarse is not None and (best is None or coarse.confidence > best.confidence):
             best = coarse
@@ -325,6 +340,11 @@ def find_all_templates(
         for x, y, conf in zip(xs.tolist(), ys.tolist(), confidences.tolist()):
             # Store in full-capture coordinates
             boxes.append([x + ox, y + oy, x + ox + tw, y + oy + th, float(conf)])
+            # Cap raw peaks — blurry templates can explode to hundreds of hits
+            if len(boxes) >= 80:
+                break
+        if len(boxes) >= 80:
+            break
 
     if not boxes and scales is None:
         # Coarse full-band pass for multi-match (e.g. claim buttons)
@@ -339,9 +359,19 @@ def find_all_templates(
             confidences = result[ys, xs]
             for x, y, conf in zip(xs.tolist(), ys.tolist(), confidences.tolist()):
                 boxes.append([x + ox, y + oy, x + ox + tw, y + oy + th, float(conf)])
+                if len(boxes) >= 80:
+                    break
+            if len(boxes) >= 80:
+                break
 
     if not boxes:
         return []
+
+    if len(boxes) > 40:
+        # Keep highest-confidence peaks before NMS when a template is too generic
+        boxes.sort(key=lambda b: b[4], reverse=True)
+        boxes = boxes[:40]
+        print(f"[vision] '{template_name}' capped multi-match peaks to 40 (was many)")
 
     boxes = _nms(boxes, nms_iou)
 

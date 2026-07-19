@@ -98,7 +98,7 @@ Stop with `Ctrl+C`.
 | `GameNotRunningError` / won't focus | Wrong process name | Check Activity Monitor; update `game.process_name` |
 | Clicks miss buttons | Weak scale / window not fully visible | Wilderness map, one display; look for `WARN: weak anchors` in the log |
 | Alliance / Gifts not found | Template mismatch | Recapture `alliance_shield_clean.png` / `alliance_gifts_precise.png` into `templates/active/` |
-| Rare tab claims click footer/back | Older code without footer filter | Current code ignores claim matches below 52% screen height; update to latest |
+| Rare tab claims click footer/back | Claim Y cutoff too low or too high | List Claims use `CLAIM_MAX_Y_FRAC=0.82` + green HSV; footer matches are ignored |
 | Screen capture fails / blank | Missing Screen Recording permission | Grant permission and restart terminal |
 | Clicks do nothing | Missing Accessibility permission | Grant permission and restart terminal |
 | Wrong display captured | Multi-monitor / game on secondary | Move game fully onto one screen |

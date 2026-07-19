@@ -23,3 +23,6 @@ click_bin
 click.c
 native/
 slices/
+
+# Temporary template crops / scans (underscore-prefixed WIP under templates/active/)
+templates/active/_*.png

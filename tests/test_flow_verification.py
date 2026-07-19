@@ -82,12 +82,12 @@ def run_single_verification(run_id: int) -> None:
     _log(f"-> Verified Alliance Gifts State: {_capture_and_state(f'{run_id}_gifts')}")
 
     _log("Step 4: Processing Claiming Loop...")
-    common_status = _claim_tab(is_common=True)
+    common_status = _claim_tab("Common")
     _log(f"-> Common Tab: {common_status}")
 
     click_template("rare_tab.png", cfg_threshold("rare_tab"), label="Rare tab")
     time.sleep(2.0)
-    rare_status = _claim_tab(is_common=False)
+    rare_status = _claim_tab("Rare")
     _log(f"-> Rare Tab: {rare_status}")
 
     _log("Step 5: Closing Alliance Gifts sub-window by clicking outside...")

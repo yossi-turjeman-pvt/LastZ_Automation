@@ -60,25 +60,27 @@ Templates larger than the ROI are skipped safely (no OpenCV assertion crash).
 
 Action buttons always use **match centers**. Overlay dismiss uses `coordinates.dismiss_outside_frac` of the current game window.
 
-## Gifts flow
+## Gifts collection flow
 
-See [FLOWS.md](FLOWS.md) for the step list. In short:
+See [FLOWS.md](FLOWS.md). In short:
 
-1. `reset_ui` — window-fraction outside clicks to clear overlays
-2. Battlefield Gifts chest on wilderness map (skip if icon absent; click match center)
-3. Open Alliance → Alliance Gifts (templates)
-4. Common tab — Claim All when present, else individual Claim buttons
-5. Rare tab — individual Claim buttons in the **gift list only** (footer / back-icon matches ignored)
-6. Outside dismiss ×2 — close Gifts, then Alliance
+1. `reset_ui` → `ensure_wilderness` (`[Map]` logs)
+2. Battlefield chest if present
+3. Alliance → Gifts → Common (Claim All / green Claims)
+4. Rare tab (tab-strip band ~yf 0.35–0.52 + one click; no extra dismiss) → Claim All / green Claims (`y ≤ 0.82`)
+5. Dismiss Gifts; confirm Alliance grid (or HUD shield in right stack only)
+6. Techs (microscope in grid band); thumbs need orange HSV + tree band; blue Donate only
+7. Dismiss Techs + Alliance
+
+Debug dumps: `logs/debug/flow/`. Observe-only scout: `python -m lastz.flows.vision_scout` → `logs/debug/scout/`.
 
 ## Watcher loop
 
 ```
 run_watcher_loop()
   loop forever:
-    ensure wilderness (click hq_world_button if in HQ)
-    run_alliance_gifts_flow()
-    sleep alliance_interval_sec   # default 180
+    run_alliance_gifts_flow()   # includes ensure_wilderness
+    sleep alliance_interval_sec
 ```
 
 KeyboardInterrupt exits cleanly. `GameNotRunningError` sleeps and retries. Other errors retry after 10s. Logs go to `logs/watcher.log`.
@@ -95,8 +97,11 @@ Paths, thresholds, intervals, process name, and dismiss fractions live in `confi
 | `lastz/input.py` | Focus + click |
 | `lastz/screen.py` | Capture + coordinate mapping |
 | `lastz/vision.py` | Template matching / NMS / auto scale / window ROI |
-| `lastz/flows/base.py` | `reset_ui`, `dismiss_overlay` |
-| `lastz/flows/alliance_gifts.py` | Alliance Gifts claim logic |
+| `lastz/flows/base.py` | `reset_ui`, `dismiss_overlay`, `ensure_wilderness` |
+| `lastz/flows/ui_bands.py` | Spatial ROI fractions for Rare / grid / tech / HUD |
+| `lastz/flows/vision_scout.py` | Observe-only scout (`python -m lastz.flows.vision_scout`) |
+| `lastz/debug_match.py` | Annotated match dumps under `logs/debug/` |
+| `lastz/flows/alliance_gifts.py` | Gifts collection: Battlefield + Gifts + Techs donations |
 | `lastz/watcher.py` | Timed claim loop |
 | `lastz/cli.py` | Menu (1–3) |
 | `lastz/__main__.py` | `python -m lastz` |
