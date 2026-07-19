@@ -50,9 +50,10 @@ python lastz_watcher.py       # start the watcher loop directly
 | 1 | Claim Alliance Gifts (once) | Runs the full collection sequence once (see below) |
 | 2 | Watcher loop | Repeats that same sequence every `alliance_interval_sec` (default **180s**) |
 | 3 | Fix Hebrew (CrossOver bottle) | **One-time bottle setup** (see below) — not part of the gifts flow |
-| 4 | Exit | Quit |
+| 4 | Help watcher | Tight poll of the **bottom-right 1/8** of the game window; clicks the handshake Help icon as soon as it blinks. Focuses once, then leaves focus alone so you can play. Ctrl+C to stop. |
+| 5 | Exit | Quit |
 
-Menu **1** and **2** run the **same** flow. There are no separate menus for drone, battlefield, gifts, or techs.
+Menu **1** and **2** run the **same** flow. There are no separate menus for drone, battlefield, gifts, or techs. Menu **4** is Help-only (not gifts/techs/trucks).
 
 ### Fix Hebrew (CrossOver) — run once
 
@@ -103,7 +104,7 @@ These are **out of scope** for the current bot (removed or never part of this sl
 - HQ building floating resources (food, wood, energy, gold, EXP pickups)  
 - Mail / inbox claims  
 - Scouting / exploration map loops (beyond the single HQ drone idle chest)  
-- Alliance Help, Wars, Shop, or other Alliance tiles  
+- Alliance Wars, Shop, or other Alliance tiles (Help is menu **4** only — blink icon click, not the Help list UI)  
 - Lower truck slots (only the **upper** slot is used for sending)  
 - Plundering other players’ trucks  
 
@@ -116,6 +117,9 @@ Tunables live in [`config.yaml`](config.yaml). See **Configuration flags** below
 ```yaml
 watcher:
   alliance_interval_sec: 180
+help_watcher:
+  poll_sec: 0.05
+  band: [0.50, 1.0, 0.75, 1.0]
 trucks:
   include_trucks_flow: true
   allow_purple_trucks: false
@@ -143,6 +147,7 @@ LastZ_Automation/
 │       ├── alliance_gifts.py
 │       ├── drone_gift.py
 │       ├── trucks.py
+│       ├── help_watcher.py  # Menu 4 handshake blink clicker
 │       ├── hq_nav.py
 │       └── base.py
 ├── templates/active/        # Templates used by the bot (required)
@@ -180,6 +185,14 @@ All of these live in [`config.yaml`](config.yaml). Restart / re-run the menu aft
 | Flag | Default | Purpose |
 |------|---------|---------|
 | `watcher.alliance_interval_sec` | `180` | Seconds between full collection runs in menu **2** |
+
+### Help watcher (menu 4)
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `help_watcher.poll_sec` | `0.05` | Sleep between BR-corner polls (lower = faster, more CPU) |
+| `help_watcher.band` | `[0.50, 1.0, 0.75, 1.0]` | Search band as fractions of game window `(yf0, yf1, xf0, xf1)` — default bottom-right 1/8 |
+| `thresholds.help_button` | `0.75` | Handshake Help icon match threshold |
 
 ### HQ Drone Gift
 
@@ -230,12 +243,15 @@ All of these live in [`config.yaml`](config.yaml). Restart / re-run the menu aft
 | `thresholds.trucks_refresh` | `0.70` | Picker refresh |
 | `thresholds.trucks_go` | `0.70` | Picker Go |
 | `thresholds.trucks_details_back` | `0.70` | Details modal back |
+| `thresholds.help_button` | `0.75` | Alliance Help handshake (menu **4**) |
+| `thresholds.quit_tips` | `0.75` | Quit Tips text "Exit the game?" |
+| `thresholds.quit_cancel` | `0.75` | Blue Cancel on Quit Tips (`reset_ui`) |
 
 ### Coordinates
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `coordinates.dismiss_outside_frac` | `[0.06, 0.28]` | Outside-click dismiss as fractions of the game window `[fx, fy]` |
+| `coordinates.dismiss_outside_frac` | `[0.06, 0.28]` | Mid-flow outside-click dismiss (reward popups) as fractions of the game window `[fx, fy]`. Startup clear uses Escape + Quit Cancel instead. |
 
 ### Disable trucks only (keep the rest of the flow)
 

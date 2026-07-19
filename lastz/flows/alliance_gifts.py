@@ -675,8 +675,8 @@ def run_alliance_gifts_flow(*, source: str = "menu") -> None:
         capture()
         log_run_header(source=source)
 
-        print("Resetting game UI to main base screen...")
-        reset_ui(clicks=3, delay=1.5)
+        print("Resetting UI (Escape; Cancel if Quit Tips)...")
+        reset_ui(clicks=3, delay=1.0)
 
         log_step("Drone", "info", "start")
         drone_status = run_drone_gift_flow(skip_reset=True)

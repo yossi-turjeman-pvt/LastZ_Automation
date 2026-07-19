@@ -9,7 +9,7 @@ One flow. Not a separate menu item. Clicks are full-dynamic (template centers + 
 ### Steps
 
 1. Ensure the game is running and focused.
-2. `reset_ui` — outside clicks at `coordinates.dismiss_outside_frac` of the game window.
+2. `reset_ui` — Escape up to N times; if Quit Tips ("Exit the game?") appears, click blue **Cancel** (never map-corner clicks on HQ).
 3. **HQ Drone Gift** — enter HQ if needed; OCR Exploration Duration under the chest; collect only if ≥ `drone_gift.min_duration` (default `08:00:00`); Claim → Collect; always return to Wilderness. Skip if no chest / not ready / OCR unavailable.
 4. **`ensure_wilderness`** — confirm Wilderness before map gifts (`[Map]` logs).
 5. **Battlefield Gifts** — `orange_icon_no_badge.png` match center → Claim All if present → dismiss.

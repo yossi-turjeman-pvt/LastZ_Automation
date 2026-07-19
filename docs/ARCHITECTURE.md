@@ -58,7 +58,7 @@ Templates larger than the ROI are skipped safely (no OpenCV assertion crash).
 
 `click(x, y)` sends `MouseMoved` → `LeftMouseDown` → `LeftMouseUp` at logical coordinates.
 
-Action buttons always use **match centers**. Overlay dismiss uses `coordinates.dismiss_outside_frac` of the current game window.
+Action buttons always use **match centers**. Startup `reset_ui` uses **Escape** + Quit Tips **Cancel** (verified). Mid-flow reward dismiss still uses `coordinates.dismiss_outside_frac` of the current game window.
 
 ## Gifts collection flow
 

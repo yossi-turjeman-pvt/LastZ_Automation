@@ -13,7 +13,8 @@ def _header() -> None:
     print(" 1. Claim Alliance Gifts (once)")
     print(" 2. Watcher loop (claim on interval)")
     print(" 3. Fix Hebrew (CrossOver) — one-time setup")
-    print(" 4. Exit")
+    print(" 4. Help watcher (handshake blink clicker)")
+    print(" 5. Exit")
     print("=" * 60)
 
 
@@ -21,7 +22,7 @@ def main() -> None:
     while True:
         _header()
         try:
-            choice = input("Enter your choice (1-4): ").strip()
+            choice = input("Enter your choice (1-5): ").strip()
         except KeyboardInterrupt:
             print("\nExiting. Goodbye!")
             break
@@ -50,9 +51,15 @@ def main() -> None:
             print()
 
         elif choice == "4":
+            print("\n>>> Starting Help Watcher (BR corner handshake)...")
+            print("    Play while it runs; Ctrl+C returns to this menu.\n")
+            from lastz.flows.help_watcher import run_help_watcher_loop
+            run_help_watcher_loop()
+
+        elif choice == "5":
             print("Exiting. Goodbye!")
             break
 
         else:
-            print("Invalid choice. Please enter a number between 1 and 4.")
+            print("Invalid choice. Please enter a number between 1 and 5.")
             time.sleep(1)

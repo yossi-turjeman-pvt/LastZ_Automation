@@ -357,3 +357,73 @@ def scale_ref_logical_delta(dx: float, dy: float) -> tuple[float, float]:
     _, _, ww, wh = get_game_window_bounds()
     ref_w, ref_h = REF_WINDOW_SIZE
     return dx * ww / ref_w, dy * wh / ref_h
+
+
+def game_window_band_logical(
+    band: tuple[float, float, float, float] | list[float],
+) -> tuple[float, float, float, float]:
+    """
+    Logical (x, y, w, h) for a band of the game window.
+
+    band = (yf0, yf1, xf0, xf1) as fractions of window height/width.
+    """
+    yf0, yf1, xf0, xf1 = (float(v) for v in band)
+    wx, wy, ww, wh = get_game_window_bounds()
+    x = wx + xf0 * ww
+    y = wy + yf0 * wh
+    w = max(1.0, (xf1 - xf0) * ww)
+    h = max(1.0, (yf1 - yf0) * wh)
+    return x, y, w, h
+
+
+def game_window_band_phys(
+    band: tuple[float, float, float, float] | list[float],
+) -> tuple[int, int, int, int]:
+    """
+    Capture-pixel (x, y, w, h) for a band of the game window on the active display.
+
+    Requires a prior full-display capture() so pixel ratio / bounds are known.
+    """
+    yf0, yf1, xf0, xf1 = (float(v) for v in band)
+    wx, wy, ww, wh = get_game_window_bounds()
+    dx, dy, dw, dh = active_display_bounds()
+    cap_w, cap_h = _last_size()
+    if dw <= 0 or dh <= 0:
+        raise RuntimeError("Active display bounds unavailable for band crop")
+
+    x0 = int(round((wx - dx + xf0 * ww) * cap_w / dw))
+    y0 = int(round((wy - dy + yf0 * wh) * cap_h / dh))
+    x1 = int(round((wx - dx + xf1 * ww) * cap_w / dw))
+    y1 = int(round((wy - dy + yf1 * wh) * cap_h / dh))
+
+    x0 = max(0, min(cap_w - 1, x0))
+    y0 = max(0, min(cap_h - 1, y0))
+    x1 = max(x0 + 1, min(cap_w, x1))
+    y1 = max(y0 + 1, min(cap_h, y1))
+    return x0, y0, x1 - x0, y1 - y0
+
+
+def capture_region(x: float, y: float, w: float, h: float) -> np.ndarray:
+    """
+    Capture a screen rectangle via screencapture -R (logical global coords).
+
+    Does **not** update full-display capture size / display state — callers that
+    need physical_to_logical on a full capture should call capture() separately.
+    """
+    rx = int(round(x))
+    ry = int(round(y))
+    rw = max(1, int(round(w)))
+    rh = max(1, int(round(h)))
+    result = subprocess.run(
+        ["screencapture", "-x", "-R", f"{rx},{ry},{rw},{rh}", _TEMP_SCREEN],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not os.path.exists(_TEMP_SCREEN):
+        raise RuntimeError(
+            f"screencapture -R failed ({rx},{ry},{rw},{rh}): {result.stderr.strip()}"
+        )
+    img = cv2.imread(_TEMP_SCREEN, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise RuntimeError(f"Region capture unreadable at {_TEMP_SCREEN}")
+    return img

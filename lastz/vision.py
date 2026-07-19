@@ -184,6 +184,11 @@ def current_template_scale() -> float:
     return float(_scale_center)
 
 
+def ensure_template_scale(screen: np.ndarray) -> None:
+    """Calibrate template scale from a full (or game-ROI) capture."""
+    _ensure_scale_calibrated(screen)
+
+
 def template_scales() -> list[float]:
     # Always include 1.0 so a stuck bad center still finds Retina templates.
     scales = set(_local_scale_band(_scale_center))
@@ -212,6 +217,40 @@ def _match_at_scales(
                 confidence=float(max_val),
             )
     return best
+
+
+def find_template_local(
+    image: np.ndarray,
+    template_name: str,
+    threshold: float,
+    *,
+    template_path: Path | None = None,
+    scales: list[float] | None = None,
+    origin_x: float = 0.0,
+    origin_y: float = 0.0,
+) -> Match | None:
+    """
+    Match a template on a pre-cropped image (no game-window ROI, no logging).
+
+    Returns Match in caller coordinates: (origin + local center). Use after a
+    full capture has calibrated template scale, or pass explicit scales.
+    """
+    tpl_path = template_path or (templates_dir() / template_name)
+    if not tpl_path.exists():
+        return None
+    tpl = cv2.imread(str(tpl_path), cv2.IMREAD_GRAYSCALE)
+    if tpl is None:
+        return None
+
+    search_scales = scales if scales is not None else template_scales()
+    best = _match_at_scales(image, tpl, search_scales)
+    if best is None or best.confidence < threshold:
+        return None
+    return Match(
+        phys_x=best.phys_x + origin_x,
+        phys_y=best.phys_y + origin_y,
+        confidence=best.confidence,
+    )
 
 
 def find_template(

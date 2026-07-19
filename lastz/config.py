@@ -92,3 +92,15 @@ def trucks_cfg() -> dict:
         # Open on badge always; also every Nth gifts run (send without badge).
         "open_every_n_runs": max(1, int(cfg.get("open_every_n_runs", 5))),
     }
+
+
+def help_watcher_cfg() -> dict:
+    """Help blink-clicker poll + search band (yf0, yf1, xf0, xf1)."""
+    cfg = load_config().get("help_watcher") or {}
+    band = cfg.get("band") or [0.50, 1.0, 0.75, 1.0]
+    if len(band) < 4:
+        band = [0.50, 1.0, 0.75, 1.0]
+    return {
+        "poll_sec": float(cfg.get("poll_sec", 0.05)),
+        "band": [float(band[0]), float(band[1]), float(band[2]), float(band[3])],
+    }

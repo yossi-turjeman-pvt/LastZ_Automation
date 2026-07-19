@@ -36,6 +36,9 @@ thresholds:
   trucks_refresh: 0.70
   trucks_go: 0.70
   trucks_details_back: 0.70
+  help_button: 0.75
+  quit_tips: 0.75              # Tips modal "Exit the game?" text
+  quit_cancel: 0.75            # blue Cancel on Quit Tips (not the tiny X)
 
 alliance_techs:
   max_donates: 20              # stop blue Donate loop after this many clicks
@@ -47,6 +50,12 @@ trucks:
   max_refreshes: 15            # safety cap while hunting orange (ticket refreshes OK)
   open_every_n_runs: 5         # also open every Nth gifts run (even without badge)
                                # badge on left-HUD icon always opens immediately
+
+# Menu 4 — click Alliance Help handshake as soon as it blinks (BR 1/8 only).
+help_watcher:
+  poll_sec: 0.05               # lower = faster, more CPU
+  # bottom-right 1/8 of game window (yf0, yf1, xf0, xf1)
+  band: [0.50, 1.0, 0.75, 1.0]
 
 drone_gift:
   min_duration: "08:00:00"     # collect only when Exploration Duration >= this
