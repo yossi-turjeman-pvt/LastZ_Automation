@@ -4,14 +4,14 @@
 
 **Entry:** menu `1`, watcher loop (`2` / `lastz_watcher.py`), or `from lastz.flows.alliance_gifts import run_alliance_gifts_flow`.
 
-One flow. Not a separate menu item.
+One flow. Not a separate menu item. Clicks are full-dynamic (template centers + window-fraction dismiss).
 
 ### Steps
 
 1. Ensure the game is running and focused.
-2. `reset_ui` — a few outside clicks (`coordinates.dismiss_outside`) to close stray modals.
+2. `reset_ui` — outside clicks at `coordinates.dismiss_outside_frac` of the game window.
 3. **Battlefield Gifts** (wilderness map chest icon) — if `orange_icon_no_badge.png` is found:
-   - Click chest (with `coordinates.battle_rewards_offset` so the red badge number is not the hit point)
+   - Click the **match center**
    - Claim All via `universal_claim_all_button.png` when present
    - Outside dismiss to clear reward overlay + close modal  
    If the chest is absent, skip and continue.
@@ -32,17 +32,17 @@ One flow. Not a separate menu item.
 | File | Used for |
 |------|----------|
 | `orange_icon_no_badge.png` | Battlefield Gifts chest on wilderness map |
-| `alliance_shield_clean.png` | Open Alliance menu |
+| `alliance_shield_clean.png` | Open Alliance menu (+ scale anchor) |
 | `alliance_gifts_precise.png` | Open Gifts window |
 | `rare_tab.png` | Switch to Rare |
 | `claim_all_button_clean.png` | Common Claim All |
 | `universal_claim_all_button.png` | Claim All (Alliance + Battlefield) |
 | `claim_button_clean.png` | Per-gift Claim |
-| `hq_world_button.png` | Watcher: leave HQ → wilderness |
-| `wilderness_hq_button.png` | Vision scale calibration anchor |
+| `hq_world_button.png` | Watcher leave HQ + scale anchor |
+| `wilderness_hq_button.png` | Scale calibration anchor |
 
 ### Config keys
 
 - `thresholds.orange_icon`, `claim_all`, `claim_button`, `alliance_shield`, `alliance_gifts`, `rare_tab`, `hq_world_button`
-- `coordinates.dismiss_outside`, `coordinates.battle_rewards_offset`
+- `coordinates.dismiss_outside_frac`
 - `watcher.alliance_interval_sec` (watcher only)

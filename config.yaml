@@ -1,5 +1,6 @@
 # LastZ Automation — Alliance Gifts (includes Battlefield chest)
 # Edit thresholds/intervals here; no code changes needed for normal tuning.
+# Clicks are full-dynamic: template match centers + window-fraction dismiss.
 
 game:
   process_name: Survival.exe   # Activity Monitor / CrossOver process name
@@ -21,11 +22,7 @@ watcher:
   alliance_interval_sec: 180   # seconds between claim runs in menu option 2
 
 coordinates:
-  # Logical offset from game window top-left — empty map click to dismiss overlays
-  dismiss_outside:
-  - 100
-  - 300
-  # Capture-pixel nudge from orange badge match toward chest center
-  battle_rewards_offset:
-  - 20
-  - -10
+  # Empty-map dismiss as fractions of the current game window (w, h)
+  dismiss_outside_frac:
+  - 0.06
+  - 0.28

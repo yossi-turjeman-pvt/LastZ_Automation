@@ -5,29 +5,56 @@ Navigation uses template matching so clicks stay accurate on any display size.
 """
 import time
 
-from lastz.config import coord_offset, threshold as cfg_threshold
+import cv2
+import numpy as np
+
+from lastz.config import threshold as cfg_threshold
 from lastz.flows.base import dismiss_overlay, reset_ui
 from lastz.input import click, ensure_game_running, focus_game
-from lastz.screen import capture, physical_to_logical, scale_capture_offset
+from lastz.screen import capture, capture_both, physical_to_logical
 from lastz.vision import click_template, find_all_templates, find_any, find_template
 
 _MAX_INDIVIDUAL_CLAIMS = 15
 # Gift-list Claim buttons sit above the modal footer (back / trash / notifications).
 # Matches below this Y fraction are the back icon area — ignore them; outside dismiss closes.
 _CLAIM_MAX_Y_FRAC = 0.52
+# Real Claim buttons are green; empty-list false positives are beige/gray UI (~0 green).
+# Floor is intentionally low vs template (~0.49) so real buttons always pass.
+_CLAIM_MIN_GREEN_RATIO = 0.20
 
 
-def _find_list_claim_button(screen):
-    """Best Claim button in the gift list; None if only footer/back-icon matches remain."""
+def _green_ratio(bgr: np.ndarray) -> float:
+    if bgr is None or bgr.size == 0:
+        return 0.0
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (35, 50, 50), (95, 255, 255))
+    return float(mask.mean()) / 255.0
+
+
+def _match_is_green_claim(color: np.ndarray, match) -> bool:
+    """True if the match bbox looks like a green Claim button (not beige list chrome)."""
+    h, w = color.shape[:2]
+    half_w = max(8, match.phys_w // 2)
+    half_h = max(8, match.phys_h // 2)
+    x1 = max(0, int(match.phys_x - half_w))
+    y1 = max(0, int(match.phys_y - half_h))
+    x2 = min(w, int(match.phys_x + half_w))
+    y2 = min(h, int(match.phys_y + half_h))
+    roi = color[y1:y2, x1:x2]
+    return _green_ratio(roi) >= _CLAIM_MIN_GREEN_RATIO
+
+
+def _find_list_claim_button(gray, color):
+    """Best green Claim button in the gift list; None if none remain."""
     matches = find_all_templates(
-        screen,
+        gray,
         "claim_button_clean.png",
         cfg_threshold("claim_button"),
     )
     if not matches:
         return None
 
-    max_y = screen.shape[0] * _CLAIM_MAX_Y_FRAC
+    max_y = gray.shape[0] * _CLAIM_MAX_Y_FRAC
     list_matches = [m for m in matches if m.phys_y <= max_y]
     if not list_matches:
         best = matches[0]
@@ -36,7 +63,16 @@ def _find_list_claim_button(screen):
             f"(best match in footer/back area y={best.phys_y:.0f}, conf={best.confidence:.4f}) — stopping"
         )
         return None
-    return list_matches[0]
+
+    green_matches = [m for m in list_matches if _match_is_green_claim(color, m)]
+    if not green_matches:
+        best = list_matches[0]
+        print(
+            f"-> No green Claim buttons left "
+            f"(best non-green conf={best.confidence:.4f} at y={best.phys_y:.0f}) — stopping"
+        )
+        return None
+    return green_matches[0]
 
 
 def _claim_tab(is_common: bool) -> str:
@@ -57,8 +93,8 @@ def _claim_tab(is_common: bool) -> str:
 
     claimed = 0
     for _ in range(_MAX_INDIVIDUAL_CLAIMS):
-        screen = capture()
-        m = _find_list_claim_button(screen)
+        color, gray = capture_both()
+        m = _find_list_claim_button(gray, color)
         if m is None:
             break
         lx, ly = physical_to_logical(m.phys_x, m.phys_y)
@@ -84,10 +120,8 @@ def _claim_battlefield_gifts() -> str:
         print("-> Battlefield Gifts chest not on screen — skipping.")
         return "skipped"
 
-    # Offset so we click the chest body, not the red badge number
-    ox, oy = coord_offset("battle_rewards_offset")
-    sox, soy = scale_capture_offset(ox, oy)
-    lx, ly = physical_to_logical(orange_match.phys_x + sox, orange_match.phys_y + soy)
+    # Click the matched chest center (full-dynamic — no fixed pixel offset)
+    lx, ly = physical_to_logical(orange_match.phys_x, orange_match.phys_y)
 
     print(f"-> Opening Battlefield Gifts at logical ({lx:.1f}, {ly:.1f}) [conf={orange_match.confidence:.4f}]")
     click(lx, ly)

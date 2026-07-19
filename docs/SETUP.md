@@ -7,7 +7,9 @@
 - LastZ (`Survival.exe`) running, visible, and not minimized
 - Game may run natively or through CrossOver / Wine — the process name must still match `config.yaml` (default `Survival.exe`)
 
-No Tesseract / OCR install is required. Alliance Gifts uses template matching only.
+No Tesseract / OCR install is required. Gifts use template matching only.
+
+No per-machine calibration step is required. Scale and clicks adapt from the live game window automatically.
 
 ## 2. Install Python dependencies
 
@@ -39,7 +41,7 @@ The bot posts synthetic mouse events via CoreGraphics.
 
 ## 4. Verify setup
 
-With the game visible on screen:
+With the game visible on the **wilderness / base map** (no modal open), fully on one display:
 
 ```bash
 source .venv/bin/activate
@@ -48,36 +50,44 @@ python -m lastz
 
 Choose **1** (Claim Alliance Gifts once). You should see:
 
-1. UI reset clicks
-2. Battlefield Gifts chest claimed if the wilderness icon is present (otherwise skipped)
-3. Alliance menu open
-4. Alliance Gifts open
-5. Common tab claim (Claim All when available)
-6. Rare tab claim
-7. Two outside clicks to close Gifts, then Alliance
+1. A log line like `[vision] Auto template scale: … (anchor=… conf=…)`
+2. UI reset clicks
+3. Battlefield Gifts chest claimed if the wilderness icon is present (otherwise skipped)
+4. Alliance menu open
+5. Alliance Gifts open
+6. Common tab claim (Claim All when available)
+7. Rare tab claim
+8. Two outside clicks to close Gifts, then Alliance
 
 If nothing happens:
 
 - Confirm `Survival.exe` appears in Activity Monitor (or update `game.process_name` in `config.yaml`)
-- Confirm the game window is frontmost and not covered
+- Confirm the game window is frontmost and not covered / split across monitors
 - Re-check Accessibility + Screen Recording for the exact app launching Python
 
-## 5. Display / template matching
+## 5. Display / template matching (full dynamic)
 
-Navigation is **template-based**, not fixed absolute coordinates. On first match, `lastz/vision.py` auto-calibrates template scale using the HQ ↔ Wilderness map buttons (`wilderness_hq_button.png` / `hq_world_button.png`).
+Navigation is **template-based** inside the **game window ROI**:
+
+1. Capture the display that contains the game
+2. Discover template scale from on-screen anchors (HQ/wilderness switchers, Alliance shield, optional Battlefield chest)
+3. Match UI templates at that scale (with a full-band refine if needed)
+4. Click match centers mapped through the live window bounds
+5. Dismiss overlays at `coordinates.dismiss_outside_frac` of the window
 
 If match confidence is consistently low:
 
 1. Leave the game on the wilderness/base map (no modal open)
-2. Confirm those two anchor templates still look like the on-screen buttons
-3. Re-crop replacements into `templates/active/` at the same filenames if the UI changed
-4. Tune thresholds in `config.yaml` under `thresholds:`
+2. Keep the window fully visible on a single display
+3. Confirm templates in `templates/active/` still look like the on-screen buttons
+4. Re-crop replacements at the same filenames if the game UI changed
+5. Tune thresholds in `config.yaml` under `thresholds:`
 
-The only fixed click offset is `coordinates.dismiss_outside` — a logical offset from the **game window top-left**, used to dismiss overlays by clicking empty map area.
+Check the console for `[vision] Auto template scale` and per-template confidence lines.
 
 ## 6. Watcher loop
 
-Menu option **2** (or `python lastz_watcher.py`) runs Alliance Gifts every `watcher.alliance_interval_sec` seconds (default 180). Logs append to `logs/watcher.log` (gitignored).
+Menu option **2** (or `python lastz_watcher.py`) runs the gifts flow every `watcher.alliance_interval_sec` seconds (default 180). Logs append to `logs/watcher.log` (gitignored).
 
 Stop with `Ctrl+C`.
 
@@ -86,8 +96,9 @@ Stop with `Ctrl+C`.
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
 | `GameNotRunningError` / won't focus | Wrong process name | Check Activity Monitor; update `game.process_name` |
-| Clicks miss buttons | Scale / window layout mismatch | Keep game full-visible; let auto-scale run on wilderness map; re-crop templates if UI changed |
+| Clicks miss buttons | Weak scale / window not fully visible | Wilderness map, one display; look for `WARN: weak anchors` in the log |
 | Alliance / Gifts not found | Template mismatch | Recapture `alliance_shield_clean.png` / `alliance_gifts_precise.png` into `templates/active/` |
 | Rare tab claims click footer/back | Older code without footer filter | Current code ignores claim matches below 52% screen height; update to latest |
 | Screen capture fails / blank | Missing Screen Recording permission | Grant permission and restart terminal |
 | Clicks do nothing | Missing Accessibility permission | Grant permission and restart terminal |
+| Wrong display captured | Multi-monitor / game on secondary | Move game fully onto one screen |

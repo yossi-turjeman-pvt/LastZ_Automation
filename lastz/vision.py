@@ -1,8 +1,8 @@
 """
-OpenCV template matching with safety guards.
+OpenCV template matching with full-dynamic scale and game-window ROI.
 
-Template scale is derived from display pixel ratio and refined using HQ
-navigation anchors visible on the base map screen.
+Scale is discovered every run from on-screen anchors (no per-machine calibration).
+Matching is restricted to the game window region so desktop chrome cannot win.
 """
 from pathlib import Path
 from typing import NamedTuple
@@ -13,6 +13,22 @@ import numpy as np
 from lastz.config import templates_dir
 
 REF_PIXEL_RATIO = 3024 / 1512  # templates captured on built-in Retina laptop
+
+_SCALE_LO = 0.35
+_SCALE_HI = 1.25
+_SCALE_STEP = 0.025
+_ACCEPT_CONF = 0.70
+_LOCAL_DELTA = 0.20
+_LOCAL_STEP = 0.025
+
+# Multi-anchor set for always-on scale discovery
+_CALIBRATION_ANCHORS = (
+    "wilderness_hq_button.png",
+    "hq_world_button.png",
+    "alliance_shield_clean.png",
+    "orange_icon_no_badge.png",
+)
+
 
 class Match(NamedTuple):
     phys_x: float
@@ -28,9 +44,6 @@ class MatchWithBBox(NamedTuple):
     confidence: float
 
 
-# Only use mode-switcher buttons for scale calibration — always on base map,
-# never inside modals (unlike orange_icon or alliance UI).
-_CALIBRATION_ANCHORS = ("wilderness_hq_button.png", "hq_world_button.png")
 _calibrated_for: tuple[int, int] | None = None
 _scale_center: float = 1.0
 
@@ -63,10 +76,53 @@ def _expected_scale_for_screen(screen: np.ndarray) -> float:
     return (cap_w / dw) / REF_PIXEL_RATIO
 
 
-def _scale_search_range(expected: float) -> list[float]:
-    lo = max(0.30, expected * 0.60)
-    hi = min(1.40, expected * 1.50)
-    return [round(x, 3) for x in np.arange(lo, hi + 0.001, 0.025)]
+def _full_scale_band() -> list[float]:
+    return [round(x, 3) for x in np.arange(_SCALE_LO, _SCALE_HI + 0.001, _SCALE_STEP)]
+
+
+def _local_scale_band(center: float) -> list[float]:
+    lo = max(_SCALE_LO, center - _LOCAL_DELTA)
+    hi = min(_SCALE_HI, center + _LOCAL_DELTA)
+    return [round(x, 3) for x in np.arange(lo, hi + 0.001, _LOCAL_STEP)]
+
+
+def _clamp_scale(scale: float) -> float:
+    return float(max(_SCALE_LO, min(_SCALE_HI, scale)))
+
+
+def game_window_roi(screen: np.ndarray) -> tuple[np.ndarray, int, int]:
+    """
+    Crop the capture to the game window in capture-pixel space.
+
+    Returns (roi_image, origin_x, origin_y). On failure, returns the full screen
+    with origin (0, 0).
+    """
+    from lastz.screen import active_display_bounds, get_game_window_bounds
+
+    sh, sw = screen.shape[:2]
+    try:
+        wx, wy, ww, wh = get_game_window_bounds()
+        dx, dy, dw, dh = active_display_bounds()
+        if dw <= 0 or dh <= 0 or ww <= 0 or wh <= 0:
+            return screen, 0, 0
+
+        # Logical window → capture pixels on the active display
+        x0 = int(round((wx - dx) * sw / dw))
+        y0 = int(round((wy - dy) * sh / dh))
+        x1 = int(round((wx - dx + ww) * sw / dw))
+        y1 = int(round((wy - dy + wh) * sh / dh))
+
+        x0 = max(0, min(sw - 1, x0))
+        y0 = max(0, min(sh - 1, y0))
+        x1 = max(x0 + 1, min(sw, x1))
+        y1 = max(y0 + 1, min(sh, y1))
+
+        roi = screen[y0:y1, x0:x1]
+        if roi.size == 0:
+            return screen, 0, 0
+        return roi, x0, y0
+    except Exception:
+        return screen, 0, 0
 
 
 def _ensure_scale_calibrated(screen: np.ndarray) -> None:
@@ -76,9 +132,11 @@ def _ensure_scale_calibrated(screen: np.ndarray) -> None:
     if _calibrated_for == shape:
         return
 
-    expected = _expected_scale_for_screen(screen)
+    roi, _, _ = game_window_roi(screen)
+    expected = _clamp_scale(_expected_scale_for_screen(screen))
     best_scale = expected
     best_conf = 0.0
+    best_anchor = ""
 
     for tpl_name in _CALIBRATION_ANCHORS:
         tpl_path = templates_dir() / tpl_name
@@ -87,25 +145,54 @@ def _ensure_scale_calibrated(screen: np.ndarray) -> None:
         tpl = cv2.imread(str(tpl_path), cv2.IMREAD_GRAYSCALE)
         if tpl is None:
             continue
-        for scale in _scale_search_range(expected):
-            conf = _probe_scale(screen, tpl, scale)
+        for scale in _full_scale_band():
+            conf = _probe_scale(roi, tpl, scale)
             if conf > best_conf:
                 best_conf = conf
                 best_scale = scale
+                best_anchor = tpl_name
 
-    if best_conf >= 0.55:
-        _scale_center = best_scale
-        print(f"[vision] Auto template scale: {best_scale:.3f} (anchor conf={best_conf:.4f})")
+    if best_conf >= _ACCEPT_CONF:
+        _scale_center = _clamp_scale(best_scale)
+        print(
+            f"[vision] Auto template scale: {_scale_center:.3f} "
+            f"(anchor={best_anchor} conf={best_conf:.4f})"
+        )
     else:
         _scale_center = expected
-        print(f"[vision] Template scale from pixel ratio: {expected:.3f} (anchors below threshold)")
+        print(
+            f"[vision] WARN: weak anchors (best conf={best_conf:.4f}). "
+            f"Using pixel-ratio scale {_scale_center:.3f}. "
+            f"Keep game on wilderness/base map, fully visible on one display."
+        )
 
     _calibrated_for = shape
 
 
 def template_scales() -> list[float]:
-    deltas = (-0.15, -0.10, -0.05, 0.0, 0.05, 0.10, 0.15)
-    return [round(_scale_center + d, 3) for d in deltas]
+    return _local_scale_band(_scale_center)
+
+
+def _match_at_scales(
+    search: np.ndarray,
+    tpl: np.ndarray,
+    scales: list[float],
+) -> Match | None:
+    sh, sw = search.shape[:2]
+    best: Match | None = None
+    for scale in scales:
+        scaled_tpl, tw, th = _scaled_template(tpl, scale)
+        if th > sh or tw > sw:
+            continue
+        result = cv2.matchTemplate(search, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+        if best is None or max_val > best.confidence:
+            best = Match(
+                phys_x=max_loc[0] + tw / 2.0,
+                phys_y=max_loc[1] + th / 2.0,
+                confidence=float(max_val),
+            )
+    return best
 
 
 def find_template(
@@ -128,26 +215,32 @@ def find_template(
         print(f"[vision] Could not load template image: {tpl_path}")
         return None
 
-    sh, sw = screen.shape
+    roi, ox, oy = game_window_roi(screen)
     search_scales = scales if scales is not None else template_scales()
 
-    best: Match | None = None
-    for scale in search_scales:
-        scaled_tpl, tw, th = _scaled_template(tpl, scale)
-        if th > sh or tw > sw:
-            continue
+    best = _match_at_scales(roi, tpl, search_scales)
 
-        result = cv2.matchTemplate(screen, scaled_tpl, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(result)
-
-        if best is None or max_val > best.confidence:
-            center_x = max_loc[0] + tw / 2
-            center_y = max_loc[1] + th / 2
-            best = Match(phys_x=center_x, phys_y=center_y, confidence=max_val)
+    # Coarse full-band re-search if local band misses (stuck scale lock)
+    if (best is None or best.confidence < threshold) and scales is None:
+        coarse = _match_at_scales(roi, tpl, _full_scale_band())
+        if coarse is not None and (best is None or coarse.confidence > best.confidence):
+            best = coarse
+            print(
+                f"[vision] '{template_name}' refined via full scale band "
+                f"(conf={best.confidence:.4f})"
+            )
 
     if best is None:
-        print(f"[vision] '{template_name}' — no valid scale fit for screen ({sw}x{sh})")
+        sh, sw = roi.shape[:2]
+        print(f"[vision] '{template_name}' — no valid scale fit for ROI ({sw}x{sh})")
         return None
+
+    # Remap ROI-local center → full capture coordinates
+    best = Match(
+        phys_x=best.phys_x + ox,
+        phys_y=best.phys_y + oy,
+        confidence=best.confidence,
+    )
 
     print(f"[vision] '{template_name}' match confidence = {best.confidence:.4f} (threshold {threshold})")
 
@@ -213,7 +306,8 @@ def find_all_templates(
         print(f"[vision] Could not load template: {tpl_path}")
         return []
 
-    sh, sw = screen.shape
+    roi, ox, oy = game_window_roi(screen)
+    sh, sw = roi.shape[:2]
     search_scales = scales if scales is not None else template_scales()
 
     boxes: list[list] = []
@@ -222,14 +316,29 @@ def find_all_templates(
         if th > sh or tw > sw:
             continue
 
-        result = cv2.matchTemplate(screen, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+        result = cv2.matchTemplate(roi, scaled_tpl, cv2.TM_CCOEFF_NORMED)
         ys, xs = np.where(result >= threshold)
         if len(xs) == 0:
             continue
 
         confidences = result[ys, xs]
         for x, y, conf in zip(xs.tolist(), ys.tolist(), confidences.tolist()):
-            boxes.append([x, y, x + tw, y + th, float(conf)])
+            # Store in full-capture coordinates
+            boxes.append([x + ox, y + oy, x + ox + tw, y + oy + th, float(conf)])
+
+    if not boxes and scales is None:
+        # Coarse full-band pass for multi-match (e.g. claim buttons)
+        for scale in _full_scale_band():
+            scaled_tpl, tw, th = _scaled_template(tpl, scale)
+            if th > sh or tw > sw:
+                continue
+            result = cv2.matchTemplate(roi, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+            ys, xs = np.where(result >= threshold)
+            if len(xs) == 0:
+                continue
+            confidences = result[ys, xs]
+            for x, y, conf in zip(xs.tolist(), ys.tolist(), confidences.tolist()):
+                boxes.append([x + ox, y + oy, x + ox + tw, y + oy + th, float(conf)])
 
     if not boxes:
         return []

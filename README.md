@@ -4,6 +4,8 @@ macOS automation for **LastZ** (`Survival.exe`) that claims **gifts** on a timer
 
 It works at the OS level only: screen capture + synthetic mouse clicks. It does not modify game files or talk to game servers.
 
+**Full dynamic clicks:** template scale is auto-detected from the live game window each run. Action clicks use match centers; dismiss uses fractions of the current window size. No per-machine calibration step.
+
 ## Quick Start
 
 ### Prerequisites
@@ -55,13 +57,15 @@ All tunables live in [`config.yaml`](config.yaml):
 | `paths.templates_dir` | Template folder (default `templates/active`) |
 | `watcher.alliance_interval_sec` | Seconds between watcher claim runs |
 | `thresholds.*` | OpenCV match confidence cutoffs |
-| `coordinates.dismiss_outside` | Window-relative click used to close overlays |
+| `coordinates.dismiss_outside_frac` | Dismiss click as fractions of game window `[fx, fy]` |
 
 Example:
 
 ```yaml
 watcher:
   alliance_interval_sec: 180
+coordinates:
+  dismiss_outside_frac: [0.06, 0.28]
 ```
 
 ## Project layout
@@ -76,7 +80,7 @@ LastZ_Automation/
 │   ├── config.py            # Loads config.yaml
 │   ├── input.py             # Focus + click
 │   ├── screen.py            # screencapture + coordinate mapping
-│   ├── vision.py            # Template matching
+│   ├── vision.py            # Template matching (auto scale + window ROI)
 │   └── flows/
 │       ├── alliance_gifts.py
 │       └── base.py
@@ -85,7 +89,7 @@ LastZ_Automation/
 └── tests/                   # Unit / verification helpers
 ```
 
-Production templates are only under **`templates/active/`**. Other PNGs under `templates/` (if present) are leftovers and are not used at runtime.
+Production templates are only under **`templates/active/`**.
 
 ## Documentation
 

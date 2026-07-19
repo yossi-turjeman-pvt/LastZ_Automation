@@ -47,18 +47,35 @@ def threshold(name: str) -> float:
 
 
 def coord_offset(name: str) -> tuple[float, float]:
-    """Return a physical-pixel offset stored at reference capture resolution."""
+    """Return a 2-value coordinate tuple from config coordinates:."""
     values = load_config()["coordinates"][name]
     return float(values[0]), float(values[1])
 
 
-def window_offset_click(name: str) -> tuple[float, float]:
-    """Click a fixed logical-pixel offset from the game window top-left corner."""
+def window_offset_click(name: str = "dismiss_outside") -> tuple[float, float]:
+    """
+    Click point inside the game window for overlay dismiss.
+
+    Prefers `dismiss_outside_frac` [fx, fy] as fractions of window width/height.
+    Falls back to legacy pixel `dismiss_outside` offset from window top-left.
+    """
     from lastz.screen import get_game_window_bounds
 
-    ox, oy = coord_offset(name)
-    wx, wy, _, _ = get_game_window_bounds()
-    return wx + ox, wy + oy
+    wx, wy, ww, wh = get_game_window_bounds()
+    coords = load_config().get("coordinates", {})
+
+    frac = coords.get("dismiss_outside_frac")
+    if frac is not None and len(frac) >= 2:
+        fx, fy = float(frac[0]), float(frac[1])
+        return wx + fx * ww, wy + fy * wh
+
+    # Legacy pixel offset (absolute logical px from window origin)
+    legacy = coords.get(name) or coords.get("dismiss_outside")
+    if legacy is not None and len(legacy) >= 2:
+        return wx + float(legacy[0]), wy + float(legacy[1])
+
+    # Safe default: upper-left empty map area
+    return wx + 0.06 * ww, wy + 0.28 * wh
 
 
 def watcher_cfg() -> dict:

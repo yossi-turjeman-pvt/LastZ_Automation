@@ -29,11 +29,12 @@ class TestDynamicCoordinates(unittest.TestCase):
         self.assertAlmostEqual(ly, 491.0)
 
     @patch("lastz.screen.get_game_window_bounds", return_value=(1512, -428, 3440, 1410))
-    def test_window_offset_click(self, _mock):
+    def test_window_offset_click_frac(self, _mock):
         from lastz.config import window_offset_click
+        # dismiss_outside_frac: [0.06, 0.28] → window-relative
         lx, ly = window_offset_click("dismiss_outside")
-        self.assertAlmostEqual(lx, 1612.0)
-        self.assertAlmostEqual(ly, -128.0)
+        self.assertAlmostEqual(lx, 1512 + 0.06 * 3440, delta=1)
+        self.assertAlmostEqual(ly, -428 + 0.28 * 1410, delta=1)
 
     def test_scale_capture_rect(self):
         scaled = screen.scale_capture_rect([1200, 730, 1200, 130])
