@@ -29,10 +29,13 @@ def main() -> None:
             print("\n>>> Launching Alliance Gifts Claim Flow...")
             from lastz.flows.alliance_gifts import run_alliance_gifts_flow
             try:
-                run_alliance_gifts_flow()
+                run_alliance_gifts_flow(source="menu")
                 print(">>> Alliance Gifts Claim Flow finished!\n")
             except GameNotRunningError as e:
                 print(f"\n[!] {e}\n")
+            except Exception as e:
+                print(f"\n[!] Flow failed: {e}")
+                print("    See logs/runs.log and logs/debug/flow/crash_*.png\n")
 
         elif choice == "2":
             print("\n>>> Starting Alliance Gifts Watcher Loop...")

@@ -98,6 +98,7 @@ Paths, thresholds, intervals, process name, and dismiss fractions live in `confi
 | `lastz/input.py` | Focus + click |
 | `lastz/screen.py` | Capture + coordinate mapping |
 | `lastz/vision.py` | Template matching / NMS / auto scale / window ROI |
+| `lastz/runlog.py` | Run header / step markers / clicks → `logs/runs.log`; crash dumps |
 | `lastz/ocr.py` | Timer OCR (HH:MM:SS) for HQ drone gift |
 | `lastz/flows/base.py` | `reset_ui`, `dismiss_overlay`, `ensure_wilderness` |
 | `lastz/flows/hq_nav.py` | HQ ↔ Wilderness mode switch |

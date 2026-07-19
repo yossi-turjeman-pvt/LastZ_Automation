@@ -21,6 +21,15 @@ from lastz.flows.ui_bands import (
     CLAIM_MAX_Y_FRAC,
 )
 from lastz.input import click, ensure_game_running, focus_game
+from lastz.runlog import (
+    dump_crash,
+    log,
+    log_click,
+    log_gifts_modal_state,
+    log_run_header,
+    log_skip,
+    log_step,
+)
 from lastz.screen import capture, capture_both, physical_to_logical
 from lastz.vision import MatchWithBBox, click_template, find_all_templates, find_any, find_template
 
@@ -129,8 +138,16 @@ def _try_claim_all() -> str | None:
     if m is None:
         print("[Gifts] No Claim All button — will try individual Claims.")
         return None
+    h = screen.shape[0]
     lx, ly = physical_to_logical(m.phys_x, m.phys_y)
-    print(f"[Gifts] Found Claim All at logical ({lx:.1f}, {ly:.1f}) [conf={m.confidence:.4f}]")
+    log_click(
+        "claim_all",
+        template="claim_all_button_clean.png",
+        conf=m.confidence,
+        logical_xy=(lx, ly),
+        phys_xy=(m.phys_x, m.phys_y),
+        y_frac=m.phys_y / h,
+    )
     click(lx, ly)
     time.sleep(2.0)
     # Exactly one outside click: closes the reward popup, leaves Gifts open.
@@ -153,9 +170,13 @@ def _claim_tab(tab_name: str) -> str:
         if m is None:
             break
         lx, ly = physical_to_logical(m.phys_x, m.phys_y)
-        print(
-            f"[Gifts] Claiming individual gift at logical ({lx:.1f}, {ly:.1f}) "
-            f"[conf={m.confidence:.4f}]"
+        log_click(
+            f"claim_{tab_name.lower()}",
+            template="claim_button_clean.png",
+            conf=m.confidence,
+            logical_xy=(lx, ly),
+            phys_xy=(m.phys_x, m.phys_y),
+            y_frac=m.phys_y / color.shape[0],
         )
         click(lx, ly)
         claimed += 1
@@ -202,6 +223,14 @@ def _switch_to_rare_tab() -> bool:
             f"[Gifts] Clicking Rare at logical ({lx:.1f}, {ly:.1f}) "
             f"phys=({m.phys_x:.0f},{m.phys_y:.0f}) conf={m.confidence:.4f} "
             f"yf={yf:.2f} attempt={attempt + 1}"
+        )
+        log_click(
+            "rare_tab",
+            template="rare_tab.png",
+            conf=m.confidence,
+            logical_xy=(lx, ly),
+            phys_xy=(m.phys_x, m.phys_y),
+            y_frac=yf,
         )
         annotate_and_save(
             color,
@@ -522,71 +551,130 @@ def _donate_alliance_techs() -> str:
     return f"donated {donated}"
 
 
-def run_alliance_gifts_flow() -> None:
+def run_alliance_gifts_flow(*, source: str = "menu") -> None:
     ensure_game_running()
     focus_game()
 
-    print("Resetting game UI to main base screen...")
-    reset_ui(clicks=3, delay=1.5)
+    try:
+        # Capture once so run header can include capture size + scale.
+        capture()
+        log_run_header(source=source)
 
-    print("[Drone] === HQ Drone Gift (before wilderness gifts) ===")
-    drone_status = run_drone_gift_flow(skip_reset=True)
-    print(f"[Drone] result: {drone_status}")
+        print("Resetting game UI to main base screen...")
+        reset_ui(clicks=3, delay=1.5)
 
-    map_status = ensure_wilderness()
-    print(f"[Map] ensure_wilderness → {map_status}")
+        log_step("Drone", "info", "start")
+        drone_status = run_drone_gift_flow(skip_reset=True)
+        log(f"[Drone] result: {drone_status}")
+        if drone_status.startswith("Collected"):
+            log_step("Drone", "pass", drone_status)
+        elif drone_status.startswith("Not ready") or "cooldown" in drone_status.lower() or "OCR" in drone_status:
+            log_step("Drone", "skip", drone_status)
+        else:
+            log_step("Drone", "fail", drone_status)
 
-    battlefield_status = _claim_battlefield_gifts()
-    print(f"Battlefield Gifts: {battlefield_status}.")
+        map_status = ensure_wilderness()
+        log_step("Wilderness", "pass", map_status)
 
-    print("Opening Alliance menu...")
-    color, gray = capture_both()
-    h, w = gray.shape[:2]
-    shields = find_all_templates(gray, "alliance_shield_clean.png", cfg_threshold("alliance_shield"))
-    hud = [m for m in shields if _band_ok(m, h, w, BAND_HUD_SHIELD)]
-    if not hud:
-        raise RuntimeError("Alliance menu button not found (HUD shield band)")
-    hud.sort(key=lambda m: m.confidence, reverse=True)
-    m = hud[0]
-    lx, ly = physical_to_logical(m.phys_x, m.phys_y)
-    print(f"-> Clicking Alliance menu at logical ({lx:.0f}, {ly:.0f}) [conf={m.confidence:.4f}]")
-    click(lx, ly)
-    time.sleep(2.0)
+        battlefield_status = _claim_battlefield_gifts()
+        if battlefield_status == "skipped":
+            log_skip("no_battlefield_chest")
+            log_step("Battlefield", "skip", battlefield_status)
+        else:
+            log_step("Battlefield", "pass", battlefield_status)
 
-    print("Opening Alliance Gifts window...")
-    color, gray = capture_both()
-    h, w = gray.shape[:2]
-    gifts = find_all_templates(gray, "alliance_gifts_precise.png", cfg_threshold("alliance_gifts"))
-    gifts_in = [m for m in gifts if _band_ok(m, h, w, BAND_ALLIANCE_GRID)]
-    if not gifts_in:
-        raise RuntimeError("Alliance Gifts button not found")
-    gifts_in.sort(key=lambda m: m.confidence, reverse=True)
-    g = gifts_in[0]
-    lx, ly = physical_to_logical(g.phys_x, g.phys_y)
-    print(f"-> Clicking Alliance Gifts at logical ({lx:.0f}, {ly:.0f}) [conf={g.confidence:.4f}]")
-    click(lx, ly)
-    time.sleep(2.0)
+        log_step("Alliance", "info", "opening")
+        color, gray = capture_both()
+        h, w = gray.shape[:2]
+        shields = find_all_templates(
+            gray, "alliance_shield_clean.png", cfg_threshold("alliance_shield")
+        )
+        hud = [m for m in shields if _band_ok(m, h, w, BAND_HUD_SHIELD)]
+        if not hud:
+            log_step("Alliance", "fail", "shield_not_found")
+            raise RuntimeError("Alliance menu button not found (HUD shield band)")
+        hud.sort(key=lambda m: m.confidence, reverse=True)
+        m = hud[0]
+        lx, ly = physical_to_logical(m.phys_x, m.phys_y)
+        log_click(
+            "alliance_shield",
+            template="alliance_shield_clean.png",
+            conf=m.confidence,
+            logical_xy=(lx, ly),
+            phys_xy=(m.phys_x, m.phys_y),
+            y_frac=m.phys_y / h,
+        )
+        click(lx, ly)
+        time.sleep(2.0)
+        log_step("Alliance", "pass", "menu_open")
 
-    print("Processing Common tab...")
-    common_status = _claim_tab("Common")
-    print(f"[Gifts] Common tab complete: {common_status}.")
+        log_step("AllianceGifts", "info", "opening")
+        color, gray = capture_both()
+        h, w = gray.shape[:2]
+        gifts = find_all_templates(
+            gray, "alliance_gifts_precise.png", cfg_threshold("alliance_gifts")
+        )
+        gifts_in = [m for m in gifts if _band_ok(m, h, w, BAND_ALLIANCE_GRID)]
+        if not gifts_in:
+            log_step("AllianceGifts", "fail", "tile_not_found")
+            raise RuntimeError("Alliance Gifts button not found")
+        gifts_in.sort(key=lambda m: m.confidence, reverse=True)
+        g = gifts_in[0]
+        lx, ly = physical_to_logical(g.phys_x, g.phys_y)
+        log_click(
+            "alliance_gifts",
+            template="alliance_gifts_precise.png",
+            conf=g.confidence,
+            logical_xy=(lx, ly),
+            phys_xy=(g.phys_x, g.phys_y),
+            y_frac=g.phys_y / h,
+        )
+        click(lx, ly)
+        time.sleep(2.0)
+        log_step("AllianceGifts", "pass", "modal_open")
 
-    print("[Gifts] Switching to Rare tab...")
-    if not _switch_to_rare_tab():
-        print("[Gifts] WARN: continuing Rare claim anyway (switch unverified).")
-    print("[Gifts] Processing Rare tab...")
-    rare_status = _claim_tab("Rare")
-    print(f"[Gifts] Rare tab complete: {rare_status}.")
+        log_step("Common", "info", "claiming")
+        common_status = _claim_tab("Common")
+        log(f"[Gifts] Common tab complete: {common_status}.")
+        if "Claimed All" in common_status:
+            gifts_state = log_gifts_modal_state("after_common_claim_all")
+            if gifts_state != "gifts_modal_open":
+                log(
+                    f"[Gifts] WARN: after Common Claim All, expected gifts modal; "
+                    f"got state={gifts_state}"
+                )
+        log_step("Common", "pass", common_status)
 
-    print("Closing Alliance Gifts window (stay on Alliance)...")
-    dismiss_overlay(delay=3.0)
+        log_step("Rare", "info", "switching")
+        if not _switch_to_rare_tab():
+            log("[Gifts] WARN: continuing Rare claim anyway (switch unverified).")
+            log_step("Rare", "fail", "switch_unverified")
+        else:
+            log_step("Rare", "pass", "switched")
+        log_step("Rare", "info", "claiming")
+        rare_status = _claim_tab("Rare")
+        log(f"[Gifts] Rare tab complete: {rare_status}.")
+        log_step("Rare", "pass", rare_status)
 
-    _ensure_alliance_open_for_techs()
+        print("Closing Alliance Gifts window (stay on Alliance)...")
+        dismiss_overlay(delay=3.0)
 
-    techs_status = _donate_alliance_techs()
-    print(f"[Techs] Alliance Techs result: {techs_status}")
+        _ensure_alliance_open_for_techs()
 
-    print("Closing Alliance Menu window...")
-    dismiss_overlay(delay=3.0)
+        log_step("Techs", "info", "donating")
+        techs_status = _donate_alliance_techs()
+        log(f"[Techs] Alliance Techs result: {techs_status}")
+        if techs_status.startswith("skipped"):
+            log_step("Techs", "skip", techs_status)
+        else:
+            log_step("Techs", "pass", techs_status)
 
-    print("Gifts collection flow complete!")
+        print("Closing Alliance Menu window...")
+        dismiss_overlay(delay=3.0)
+
+        log_step("Done", "pass", "gifts_collection_complete")
+        print("Gifts collection flow complete!")
+
+    except Exception as exc:
+        dump_crash(exc, prefix="crash_gifts")
+        raise

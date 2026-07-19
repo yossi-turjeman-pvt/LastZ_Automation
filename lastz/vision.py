@@ -179,6 +179,11 @@ def _ensure_scale_calibrated(screen: np.ndarray) -> None:
     _calibrated_for = shape
 
 
+def current_template_scale() -> float:
+    """Return the last calibrated template scale center (1.0 if not yet calibrated)."""
+    return float(_scale_center)
+
+
 def template_scales() -> list[float]:
     # Always include 1.0 so a stuck bad center still finds Retina templates.
     scales = set(_local_scale_band(_scale_center))

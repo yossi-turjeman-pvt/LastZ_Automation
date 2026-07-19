@@ -15,6 +15,7 @@ from lastz.flows.base import dismiss_overlay, reset_ui
 from lastz.flows.hq_nav import is_hq_mode, navigate_to_hq, navigate_to_wilderness
 from lastz.input import click, ensure_game_running, focus_game
 from lastz.ocr import format_duration, parse_duration, read_duration_from_region
+from lastz.runlog import log_click, log_skip
 from lastz.screen import capture, capture_both, physical_to_logical, scale_capture_rect
 from lastz.vision import Match, find_template
 
@@ -182,10 +183,12 @@ def run_drone_gift_flow(*, skip_reset: bool = False) -> str:
         if started_in_wilderness:
             print("-> Not in HQ mode — attempting to navigate to Headquarters...")
             if not navigate_to_hq(screen):
+                log_skip("hq_nav_failed", detail="headquarters_button_not_found")
                 return "Not in HQ mode — Headquarters button not found"
             _, screen = capture_both()
             if not is_hq_mode(screen):
                 print("-> Still not in HQ mode after navigation attempt.")
+                log_skip("hq_nav_failed", detail="still_not_hq")
                 return "Navigation failed — still not HQ mode"
             print("-> Now in HQ mode.")
         entered_hq = True
@@ -195,14 +198,17 @@ def run_drone_gift_flow(*, skip_reset: bool = False) -> str:
         ready, chest_match, _readings, detail = _gate_timer_reads(min_sec)
         if chest_match is None:
             print("-> Gift chest not visible on screen (cooldown or not available).")
+            log_skip("no_chest", detail="cooldown_or_missing")
             return "No chest visible (cooldown)"
         if not ready:
             if detail == "OCR unreadable":
                 print(
                     "-> OCR could not read timer reliably. Skipping to avoid early collection."
                 )
+                log_skip("ocr_unavailable")
                 return "OCR unavailable — skipping"
             print(f"-> Timer not confirmed >= {format_duration(min_sec)} ({detail}).")
+            log_skip("timer_low", best=detail, need=format_duration(min_sec))
             return f"Not ready ({detail})"
 
         duration_str = detail
@@ -215,8 +221,17 @@ def run_drone_gift_flow(*, skip_reset: bool = False) -> str:
         if fresh_chest is not None:
             chest_match = fresh_chest
 
+        h = fresh_gray.shape[0]
         lx, ly = physical_to_logical(chest_match.phys_x, chest_match.phys_y)
         print(f"-> Clicking chest badge at logical ({lx:.1f}, {ly:.1f})...")
+        log_click(
+            "drone_chest",
+            template="hq_drone_gift_chest.png",
+            conf=chest_match.confidence,
+            logical_xy=(lx, ly),
+            phys_xy=(chest_match.phys_x, chest_match.phys_y),
+            y_frac=chest_match.phys_y / h,
+        )
         click(lx, ly)
         time.sleep(2.0)
 
@@ -229,6 +244,13 @@ def run_drone_gift_flow(*, skip_reset: bool = False) -> str:
         if claim_match is not None:
             clx, cly = physical_to_logical(claim_match.phys_x, claim_match.phys_y)
             print(f"-> Clicking Claim at logical ({clx:.1f}, {cly:.1f})...")
+            log_click(
+                "drone_claim",
+                template="drone_claim_btn.png",
+                conf=claim_match.confidence,
+                logical_xy=(clx, cly),
+                phys_xy=(claim_match.phys_x, claim_match.phys_y),
+            )
             click(clx, cly)
             time.sleep(2.0)
         else:
@@ -238,6 +260,7 @@ def run_drone_gift_flow(*, skip_reset: bool = False) -> str:
             )
             if collect_direct is None:
                 print("-> Claim button not found in Area Exploration. Closing and skipping.")
+                log_skip("claim_button_not_found")
                 dismiss_overlay(delay=1.5)
                 return "Claim button not found"
             print("-> Idle Reward modal opened directly (no Claim step).")
@@ -251,6 +274,7 @@ def run_drone_gift_flow(*, skip_reset: bool = False) -> str:
         if modal_duration is not None and modal_duration < min_sec:
             modal_str = format_duration(modal_duration)
             print(f"-> Modal timer {modal_str} is below threshold. Closing without collecting.")
+            log_skip("timer_low", best=modal_str, need=format_duration(min_sec), where="modal")
             dismiss_overlay(delay=1.5)
             dismiss_overlay(delay=1.5)
             return f"Not ready — modal confirms ({modal_str})"
@@ -260,12 +284,20 @@ def run_drone_gift_flow(*, skip_reset: bool = False) -> str:
         )
         if collect_match is None:
             print("-> Collect button not found in Idle Reward modal. Closing.")
+            log_skip("collect_button_not_found")
             dismiss_overlay(delay=1.5)
             dismiss_overlay(delay=1.5)
             return "Collect button not found"
 
         colx, coly = physical_to_logical(collect_match.phys_x, collect_match.phys_y)
         print(f"-> Clicking Collect at logical ({colx:.1f}, {coly:.1f})...")
+        log_click(
+            "drone_collect",
+            template="drone_collect_btn.png",
+            conf=collect_match.confidence,
+            logical_xy=(colx, coly),
+            phys_xy=(collect_match.phys_x, collect_match.phys_y),
+        )
         click(colx, coly)
         time.sleep(2.0)
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from lastz.config import logs_dir, watcher_cfg
 from lastz.flows.alliance_gifts import run_alliance_gifts_flow
 from lastz.input import GameNotRunningError
+from lastz.runlog import dump_crash
 
 
 def _log_path() -> Path:
@@ -38,9 +39,8 @@ def run_watcher_loop() -> None:
 
     while True:
         try:
-            # Wilderness ensure runs inside run_alliance_gifts_flow() with [Map] logs
             log(">>> Running Alliance Gifts...")
-            run_alliance_gifts_flow()
+            run_alliance_gifts_flow(source="watcher")
             log(f">>> Alliance Gifts complete. Next run in {alliance_interval}s.")
             print("-" * 60)
             time.sleep(alliance_interval)
@@ -53,6 +53,7 @@ def run_watcher_loop() -> None:
             log(f"Sleeping {alliance_interval}s before next check...")
             time.sleep(alliance_interval)
         except Exception as e:
+            dump_crash(e, prefix="crash_watcher")
             log(f"ERROR: {e}")
             log("Retrying in 10 seconds...")
             time.sleep(10)

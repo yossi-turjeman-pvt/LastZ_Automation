@@ -141,6 +141,8 @@ Production templates are only under **`templates/active/`**.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How capture / vision / clicks work |
 | [docs/FLOWS.md](docs/FLOWS.md) | Collection step-by-step (Drone + Battlefield + Gifts + Techs) |
 
+After a failed run, share **`logs/runs.log`** (and any `logs/debug/flow/crash_*.png`). The watcher also writes `logs/watcher.log`.
+
 ## Disclaimer
 
 This tool automates in-game actions. Using automation may violate the game's Terms of Service. Use at your own risk.
