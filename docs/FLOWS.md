@@ -21,7 +21,7 @@ One flow. Not a separate menu item. Clicks are full-dynamic (template centers + 
 11. **Alliance open check** — if grid tiles (`alliance_techs` / `alliance_gifts`) in mid band → stay; else re-open only via HUD shield in **right-stack** band (never center-screen FPs).
 12. **Alliance Techs** — microscope `alliance_techs.png` in grid band (label fallback only in-band); thumbs with **orange HSV + tree band** (ignores map help icons); else lit hex; **blue** Donate only.
 13. Dismiss Techs + Alliance.
-14. **Trucks** (if `trucks.include_trucks_flow`, default true) — left-HUD `trucks_icon.png` → My Truck → claim chest(s) → if trade &lt; 4/4 and upper slot has green `+`, open picker → refresh (tickets OK, capped by `max_refreshes`) until orange (or purple if `allow_purple_trucks`) → Go → **Escape** to Wilderness. Upper slot en route with no chest → leave it.
+14. **Trucks** (if `trucks.include_trucks_flow`, default true) — open when left-HUD icon has a **red badge**, or every `open_every_n_runs` gifts runs (default 5). Then: My Truck → claim chest(s) → if trade &lt; 4/4 and upper slot has green `+`, open picker → refresh (tickets OK, capped by `max_refreshes`) until orange (or purple if `allow_purple_trucks`) → Go → **Escape**. Upper slot en route with no chest → leave it.
 
 ### Spatial bands (`lastz/flows/ui_bands.py`)
 
@@ -75,7 +75,7 @@ Writes annotated PNGs + `logs/debug/scout/report.md`. Flow debug clicks also dum
 - Thresholds including `drone_gift_chest`, `alliance_techs`, `tech_thumbs_up` (0.78), `donate_blue`, `trucks_*`, …
 - `drone_gift.min_duration` / `timer_crop_offset` / `modal_timer_region`
 - `alliance_techs.max_donates`
-- `trucks.include_trucks_flow` / `allow_purple_trucks` / `max_refreshes`
+- `trucks.include_trucks_flow` / `allow_purple_trucks` / `max_refreshes` / `open_every_n_runs`
 - `coordinates.dismiss_outside_frac`
 - `watcher.alliance_interval_sec`
 

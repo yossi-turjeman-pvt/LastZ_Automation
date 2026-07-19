@@ -2,7 +2,9 @@
 Trucks flow — claim arrived trucks and send an orange truck from the upper slot.
 
 Runs at the end of menu 1 / watcher (after Alliance Techs) when
-`trucks.include_trucks_flow` is true. Exit via Escape.
+`trucks.include_trucks_flow` is true. Opens when the left-HUD icon has a
+red badge, or every `open_every_n_runs` gifts runs in this process
+(default 5). Exit via Escape.
 """
 from __future__ import annotations
 
@@ -29,6 +31,7 @@ except ImportError:
 TruckColor = Literal["orange", "purple", "other", "unknown"]
 
 _TRADE_RE = re.compile(r"(\d)\s*/\s*4")
+_run_counter = 0  # process-lifetime gifts-run count for open_every_n_runs
 
 
 def _click_match(m: Match, label: str, template: str) -> None:
@@ -49,19 +52,84 @@ def _exit_trucks(*, delay: float = 1.5) -> None:
     time.sleep(delay)
 
 
-def _open_trucks() -> bool:
+def _bump_run_counter() -> int:
+    """Increment in-process gifts-run counter; return new value (1-based)."""
+    global _run_counter
+    _run_counter += 1
+    return _run_counter
+
+
+def _find_trucks_icon(gray: np.ndarray) -> Match | None:
     thr = cfg_threshold("trucks_icon")
-    color, gray = capture_both()
     h, w = gray.shape[:2]
     m = find_template(gray, "trucks_icon.png", thr)
     if m is None:
-        # Soft retry — icon without badge is a weaker match to the badged template
         m = find_template(gray, "trucks_icon.png", max(0.55, thr - 0.12))
     if m is None:
-        return False
-    # Prefer left-HUD hits (reject map-truck FPs)
+        return None
     if m.phys_x / w > 0.15:
         print(f"[Trucks] trucks_icon rejected (xf={m.phys_x / w:.2f} not left HUD)")
+        return None
+    return m
+
+
+def _icon_has_red_badge(color: np.ndarray, icon: Match) -> bool:
+    """True if a red notification badge sits on the trucks icon (top-right)."""
+    h, w = color.shape[:2]
+    # Badge is near the icon's upper-right; search a pad around the match center
+    pad = max(40, int(0.035 * h))
+    cx, cy = int(icon.phys_x), int(icon.phys_y)
+    x0 = max(0, cx - pad // 2)
+    x1 = min(w, cx + pad)
+    y0 = max(0, cy - pad)
+    y1 = min(h, cy + pad // 2)
+    roi = color[y0:y1, x0:x1]
+    if roi.size == 0:
+        return False
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    m1 = cv2.inRange(hsv, (0, 100, 100), (12, 255, 255))
+    m2 = cv2.inRange(hsv, (168, 100, 100), (180, 255, 255))
+    red = cv2.bitwise_or(m1, m2)
+    red = cv2.morphologyEx(red, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    n, _, stats, _ = cv2.connectedComponentsWithStats(red, 8)
+    for i in range(1, n):
+        a = int(stats[i, cv2.CC_STAT_AREA])
+        bw = int(stats[i, cv2.CC_STAT_WIDTH])
+        bh = int(stats[i, cv2.CC_STAT_HEIGHT])
+        if 15 <= a <= 800 and 6 <= bw <= 45 and 6 <= bh <= 45:
+            return True
+    return False
+
+
+def _should_open_trucks(color: np.ndarray, gray: np.ndarray) -> tuple[bool, str]:
+    """
+    Open when left-HUD icon has a red badge, or every Nth gifts run.
+
+    Returns (should_open, reason).
+    """
+    cfg = trucks_cfg()
+    n_every = cfg["open_every_n_runs"]
+    run_i = _bump_run_counter()
+    cadence_hit = (run_i % n_every) == 0
+
+    icon = _find_trucks_icon(gray)
+    has_badge = bool(icon and _icon_has_red_badge(color, icon))
+
+    print(
+        f"[Trucks] gate run={run_i} every_n={n_every} "
+        f"badge={has_badge} cadence={cadence_hit}"
+    )
+    if has_badge:
+        return True, "badge"
+    if cadence_hit:
+        return True, f"cadence every_{n_every} (run {run_i})"
+    return False, f"no_badge and run {run_i} not multiple of {n_every}"
+
+
+def _open_trucks() -> bool:
+    color, gray = capture_both()
+    m = _find_trucks_icon(gray)
+    if m is None:
         return False
     _click_match(m, "trucks_icon", "trucks_icon.png")
     time.sleep(2.0)
@@ -375,7 +443,8 @@ def run_trucks_flow() -> str:
     """
     Claim arrived trucks and optionally send one from the upper slot.
 
-    Returns a short status string for logging.
+    Opens only when the left-HUD icon has a red badge, or every
+    `open_every_n_runs` gifts runs. Returns a short status string for logging.
     """
     cfg = trucks_cfg()
     if not cfg["include_trucks_flow"]:
@@ -384,13 +453,21 @@ def run_trucks_flow() -> str:
 
     allow_purple = cfg["allow_purple_trucks"]
     max_refreshes = cfg["max_refreshes"]
+    n_every = cfg["open_every_n_runs"]
     print(
-        f"[Trucks] start include=true allow_purple={allow_purple} "
-        f"max_refreshes={max_refreshes}"
+        f"[Trucks] include=true allow_purple={allow_purple} "
+        f"max_refreshes={max_refreshes} open_every_n={n_every}"
     )
 
     ensure_wilderness()
 
+    color, gray = capture_both()
+    should_open, gate_reason = _should_open_trucks(color, gray)
+    if not should_open:
+        log_skip("trucks_gate", detail=gate_reason)
+        return f"skipped: {gate_reason}"
+
+    print(f"[Trucks] opening ({gate_reason})")
     if not _open_trucks():
         log_skip("trucks_icon_not_found")
         return "skipped: trucks icon"

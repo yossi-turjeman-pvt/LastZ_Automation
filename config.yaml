@@ -45,6 +45,8 @@ trucks:
   include_trucks_flow: true    # false = leave trucks fully manual
   allow_purple_trucks: false   # true = accept purple; false = refresh for orange
   max_refreshes: 15            # safety cap while hunting orange (ticket refreshes OK)
+  open_every_n_runs: 5         # also open every Nth gifts run (even without badge)
+                               # badge on left-HUD icon always opens immediately
 
 drone_gift:
   min_duration: "08:00:00"     # collect only when Exploration Duration >= this

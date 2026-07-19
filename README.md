@@ -92,7 +92,7 @@ In order:
    Opens Alliance Techs, picks a recommended tech (orange thumbs-up) or a lit hex, then clicks the **blue** Donate button until it is no longer blue / available (capped by `alliance_techs.max_donates`).
 
 6. **Trucks** (when `trucks.include_trucks_flow` is true — default)  
-   Opens the left-HUD truck icon → **My Truck** → claims any arrived chest → if the day is under **4/4** and the **upper** slot is empty, opens the picker, refreshes (ticket refreshes OK) until an **orange** truck (unless `allow_purple_trucks`), clicks **Go**, then **Escape** back to Wilderness. If the upper slot already has a truck en route, leaves it alone.
+   Opens only if the left-HUD truck icon has a **red badge**, or on every **`open_every_n_runs`** gifts run (default **5**). Then: **My Truck** → claim arrived chest → if under **4/4** and the **upper** slot is empty, refresh for **orange** (unless `allow_purple_trucks`) → **Go** → **Escape**. Upper slot en route → leave it.
 
 ### What it does **not** collect
 
@@ -119,6 +119,7 @@ watcher:
 trucks:
   include_trucks_flow: true
   allow_purple_trucks: false
+  open_every_n_runs: 5
 coordinates:
   dismiss_outside_frac: [0.06, 0.28]
 ```
@@ -201,6 +202,7 @@ All of these live in [`config.yaml`](config.yaml). Restart / re-run the menu aft
 | `trucks.include_trucks_flow` | `true` | `false` = skip trucks entirely (manual picking) |
 | `trucks.allow_purple_trucks` | `false` | `false` = refresh for **orange**; `true` = purple OK too |
 | `trucks.max_refreshes` | `15` | Safety cap while refreshing (ticket cost `N/1` is allowed; not paid diamonds) |
+| `trucks.open_every_n_runs` | `5` | Also open every Nth gifts run (even without a badge). **Badge always opens immediately.** |
 
 ### Vision thresholds
 

@@ -89,4 +89,6 @@ def trucks_cfg() -> dict:
         "include_trucks_flow": bool(cfg.get("include_trucks_flow", True)),
         "allow_purple_trucks": bool(cfg.get("allow_purple_trucks", False)),
         "max_refreshes": int(cfg.get("max_refreshes", 15)),
+        # Open on badge always; also every Nth gifts run (send without badge).
+        "open_every_n_runs": max(1, int(cfg.get("open_every_n_runs", 5))),
     }
