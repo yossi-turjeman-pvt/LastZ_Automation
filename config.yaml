@@ -20,10 +20,28 @@ thresholds:
   tech_thumbs_up: 0.78
   tech_hex_active: 0.65
   donate_blue: 0.75
-  hq_world_button: 0.7         # watcher: detect HQ mode to return to wilderness
+  hq_world_button: 0.7         # HQ mode: World button (leave HQ)
+  wilderness_hq_button: 0.7    # Wilderness: Headquarters button (enter HQ)
+  drone_gift_chest: 0.58
+  drone_claim_btn: 0.55
+  drone_collect_btn: 0.55
 
 alliance_techs:
   max_donates: 20              # stop blue Donate loop after this many clicks
+
+drone_gift:
+  min_duration: "08:00:00"     # collect only when Exploration Duration >= this
+  # Physical-pixel rects relative to reference capture; scaled at runtime
+  timer_crop_offset:           # [dx, dy, w, h] from chest match center
+  - -77
+  - 8
+  - 150
+  - 28
+  modal_timer_region:          # [x, y, w, h] on Idle Reward modal
+  - 1200
+  - 730
+  - 1200
+  - 130
 
 watcher:
   alliance_interval_sec: 180   # seconds between claim runs in menu option 2

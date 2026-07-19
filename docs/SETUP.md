@@ -7,9 +7,16 @@
 - LastZ (`Survival.exe`) running, visible, and not minimized
 - Game may run natively or through CrossOver / Wine — the process name must still match `config.yaml` (default `Survival.exe`)
 
-No Tesseract / OCR install is required. Gifts use template matching only.
-
 No per-machine calibration step is required. Scale and clicks adapt from the live game window automatically.
+
+**OCR (HQ drone gift timer):** install Tesseract on macOS:
+
+```bash
+brew install tesseract
+pip install pytesseract   # also listed in requirements.txt
+```
+
+Without Tesseract, drone gift collection skips safely when the timer cannot be read.
 
 ## 2. Install Python dependencies
 
@@ -21,7 +28,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-This installs: `opencv-python`, `numpy`, `Pillow`, `PyYAML`.
+This installs: `opencv-python`, `numpy`, `Pillow`, `PyYAML`, `pytesseract`.
 
 ## 3. macOS permissions
 
@@ -52,12 +59,14 @@ Choose **1** (Claim Alliance Gifts once). You should see:
 
 1. A log line like `[vision] Auto template scale: … (anchor=… conf=…)`
 2. UI reset clicks
-3. Battlefield Gifts chest claimed if the wilderness icon is present (otherwise skipped)
-4. Alliance menu open
-5. Alliance Gifts open
-6. Common tab claim (Claim All when available)
-7. Rare tab claim
-8. Two outside clicks to close Gifts, then Alliance
+3. HQ Drone Gift — collect if Exploration Duration ≥ `08:00:00` (otherwise skipped); then return to Wilderness
+4. Battlefield Gifts chest claimed if the wilderness icon is present (otherwise skipped)
+5. Alliance menu open
+6. Alliance Gifts open
+7. Common tab claim (Claim All when available)
+8. Rare tab claim
+9. Alliance Techs blue Donate (if available)
+10. Outside clicks to close Gifts / Techs / Alliance
 
 If nothing happens:
 

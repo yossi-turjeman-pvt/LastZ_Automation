@@ -1,12 +1,14 @@
 # LastZ Automation
 
-macOS automation for **LastZ** (`Survival.exe`) that runs a **gifts collection** flow on a timer: Battlefield chest + Alliance Gifts (Common + Rare) + Alliance Techs gold donations.
+macOS automation for **LastZ** (`Survival.exe`) that runs a **gifts collection** flow on a timer: HQ Drone Gift (when ≥ 08:00:00) + Battlefield chest + Alliance Gifts (Common + Rare) + Alliance Techs gold donations.
 
 Vision uses **spatial bands** so high-confidence false positives (map help thumbs, Wars chrome, wrong shield hits) are rejected. Observe-only scout (no Claim/Donate): `python -m lastz.flows.vision_scout`.
 
 It works at the OS level only: screen capture + synthetic mouse clicks. It does not modify game files or talk to game servers.
 
 **Full dynamic clicks:** template scale is auto-detected from the live game window each run. Action clicks use match centers; dismiss uses fractions of the current window size. No per-machine calibration step.
+
+HQ drone timers use **OCR** (`pytesseract` + system Tesseract). See [docs/SETUP.md](docs/SETUP.md).
 
 ## Quick Start
 
@@ -45,7 +47,7 @@ python lastz_watcher.py       # start the watcher loop directly
 
 | # | Option | What it does |
 |---|--------|----------------|
-| 1 | Claim Alliance Gifts (once) | Battlefield + Alliance Common/Rare + Techs (blue Donate) |
+| 1 | Claim Alliance Gifts (once) | HQ Drone (if ≥ 08:00:00) + Battlefield + Alliance Common/Rare + Techs |
 | 2 | Watcher loop | Repeats the same gifts flow every `alliance_interval_sec` (default **180s**) |
 | 3 | Exit | Quit |
 
@@ -58,6 +60,7 @@ All tunables live in [`config.yaml`](config.yaml):
 | `game.process_name` | Process to focus (default `Survival.exe`) |
 | `paths.templates_dir` | Template folder (default `templates/active`) |
 | `watcher.alliance_interval_sec` | Seconds between watcher claim runs |
+| `drone_gift.min_duration` | Collect HQ drone only at/above this timer (default `08:00:00`) |
 | `thresholds.*` | OpenCV match confidence cutoffs |
 | `coordinates.dismiss_outside_frac` | Dismiss click as fractions of game window `[fx, fy]` |
 
@@ -83,8 +86,11 @@ LastZ_Automation/
 │   ├── input.py             # Focus + click
 │   ├── screen.py            # screencapture + coordinate mapping
 │   ├── vision.py            # Template matching (auto scale + window ROI)
+│   ├── ocr.py               # Timer OCR for HQ drone gift
 │   └── flows/
 │       ├── alliance_gifts.py
+│       ├── drone_gift.py
+│       ├── hq_nav.py
 │       └── base.py
 ├── templates/active/        # Templates used by the bot (required)
 ├── docs/                    # Setup + architecture + flow notes
@@ -99,7 +105,7 @@ Production templates are only under **`templates/active/`**.
 |-----|----------|
 | [docs/SETUP.md](docs/SETUP.md) | Permissions, install checks, troubleshooting |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How capture / vision / clicks work |
-| [docs/FLOWS.md](docs/FLOWS.md) | Gifts collection step-by-step (Battlefield + Gifts + Techs) |
+| [docs/FLOWS.md](docs/FLOWS.md) | Collection step-by-step (Drone + Battlefield + Gifts + Techs) |
 
 ## Disclaimer
 

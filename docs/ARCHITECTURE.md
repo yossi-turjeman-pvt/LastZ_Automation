@@ -64,13 +64,14 @@ Action buttons always use **match centers**. Overlay dismiss uses `coordinates.d
 
 See [FLOWS.md](FLOWS.md). In short:
 
-1. `reset_ui` → `ensure_wilderness` (`[Map]` logs)
-2. Battlefield chest if present
-3. Alliance → Gifts → Common (Claim All / green Claims)
-4. Rare tab (tab-strip band ~yf 0.35–0.52 + one click; no extra dismiss) → Claim All / green Claims (`y ≤ 0.82`)
-5. Dismiss Gifts; confirm Alliance grid (or HUD shield in right stack only)
-6. Techs (microscope in grid band); thumbs need orange HSV + tree band; blue Donate only
-7. Dismiss Techs + Alliance
+1. `reset_ui` → **HQ Drone Gift** (if timer ≥ `08:00:00`) → always leave Wilderness
+2. `ensure_wilderness` (`[Map]` logs)
+3. Battlefield chest if present
+4. Alliance → Gifts → Common (Claim All / green Claims)
+5. Rare tab (tab-strip band ~yf 0.35–0.52 + one click; no extra dismiss) → Claim All / green Claims (`y ≤ 0.82`)
+6. Dismiss Gifts; confirm Alliance grid (or HUD shield in right stack only)
+7. Techs (microscope in grid band); thumbs need orange HSV + tree band; blue Donate only
+8. Dismiss Techs + Alliance
 
 Debug dumps: `logs/debug/flow/`. Observe-only scout: `python -m lastz.flows.vision_scout` → `logs/debug/scout/`.
 
@@ -97,11 +98,14 @@ Paths, thresholds, intervals, process name, and dismiss fractions live in `confi
 | `lastz/input.py` | Focus + click |
 | `lastz/screen.py` | Capture + coordinate mapping |
 | `lastz/vision.py` | Template matching / NMS / auto scale / window ROI |
+| `lastz/ocr.py` | Timer OCR (HH:MM:SS) for HQ drone gift |
 | `lastz/flows/base.py` | `reset_ui`, `dismiss_overlay`, `ensure_wilderness` |
+| `lastz/flows/hq_nav.py` | HQ ↔ Wilderness mode switch |
+| `lastz/flows/drone_gift.py` | HQ Area Exploration idle reward (≥ 08:00:00) |
 | `lastz/flows/ui_bands.py` | Spatial ROI fractions for Rare / grid / tech / HUD |
 | `lastz/flows/vision_scout.py` | Observe-only scout (`python -m lastz.flows.vision_scout`) |
 | `lastz/debug_match.py` | Annotated match dumps under `logs/debug/` |
-| `lastz/flows/alliance_gifts.py` | Gifts collection: Battlefield + Gifts + Techs donations |
+| `lastz/flows/alliance_gifts.py` | Full collection: Drone + Battlefield + Gifts + Techs |
 | `lastz/watcher.py` | Timed claim loop |
 | `lastz/cli.py` | Menu (1–3) |
 | `lastz/__main__.py` | `python -m lastz` |

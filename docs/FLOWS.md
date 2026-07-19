@@ -1,6 +1,6 @@
 # Flows
 
-## Gifts collection (Battlefield + Alliance Gifts + Alliance Techs)
+## Gifts collection (HQ Drone + Battlefield + Alliance Gifts + Alliance Techs)
 
 **Entry:** menu `1`, watcher loop (`2` / `lastz_watcher.py`), or `from lastz.flows.alliance_gifts import run_alliance_gifts_flow`.
 
@@ -10,16 +10,17 @@ One flow. Not a separate menu item. Clicks are full-dynamic (template centers + 
 
 1. Ensure the game is running and focused.
 2. `reset_ui` — outside clicks at `coordinates.dismiss_outside_frac` of the game window.
-3. **`ensure_wilderness`** — World button → HQ→Wilderness; Headquarters button → already wilderness (`[Map]` logs).
-4. **Battlefield Gifts** — `orange_icon_no_badge.png` match center → Claim All if present → dismiss.
-5. Open **Alliance** — HUD shield in right-stack band only.
-6. Open **Alliance Gifts** — `alliance_gifts_precise.png` in grid band.
-7. **Common tab** — Claim All if present (**one** outside dismiss for reward popup), else green individual Claims (`y ≤ 0.82`, green HSV ≥ 0.20, top-of-list first).
-8. **Rare tab** — match `rare_tab.png` in tab band (~yf 0.35–0.52 under Level bar); click; **no** second outside dismiss. Then Claim All if present / else green Claims same as Common.
-9. Dismiss Gifts (stay on Alliance).
-10. **Alliance open check** — if grid tiles (`alliance_techs` / `alliance_gifts`) in mid band → stay; else re-open only via HUD shield in **right-stack** band (never center-screen FPs).
-11. **Alliance Techs** — microscope `alliance_techs.png` in grid band (label fallback only in-band); thumbs with **orange HSV + tree band** (ignores map help icons); else lit hex; **blue** Donate only.
-12. Dismiss Techs + Alliance.
+3. **HQ Drone Gift** — enter HQ if needed; OCR Exploration Duration under the chest; collect only if ≥ `drone_gift.min_duration` (default `08:00:00`); Claim → Collect; always return to Wilderness. Skip if no chest / not ready / OCR unavailable.
+4. **`ensure_wilderness`** — confirm Wilderness before map gifts (`[Map]` logs).
+5. **Battlefield Gifts** — `orange_icon_no_badge.png` match center → Claim All if present → dismiss.
+6. Open **Alliance** — HUD shield in right-stack band only.
+7. Open **Alliance Gifts** — `alliance_gifts_precise.png` in grid band.
+8. **Common tab** — Claim All if present (**one** outside dismiss for reward popup), else green individual Claims (`y ≤ 0.82`, green HSV ≥ 0.20, top-of-list first).
+9. **Rare tab** — match `rare_tab.png` in tab band (~yf 0.35–0.52 under Level bar); click; **no** second outside dismiss. Then Claim All if present / else green Claims same as Common.
+10. Dismiss Gifts (stay on Alliance).
+11. **Alliance open check** — if grid tiles (`alliance_techs` / `alliance_gifts`) in mid band → stay; else re-open only via HUD shield in **right-stack** band (never center-screen FPs).
+12. **Alliance Techs** — microscope `alliance_techs.png` in grid band (label fallback only in-band); thumbs with **orange HSV + tree band** (ignores map help icons); else lit hex; **blue** Donate only.
+13. Dismiss Techs + Alliance.
 
 ### Spatial bands (`lastz/flows/ui_bands.py`)
 
@@ -45,6 +46,9 @@ Writes annotated PNGs + `logs/debug/scout/report.md`. Flow debug clicks also dum
 
 | File | Used for |
 |------|----------|
+| `hq_drone_gift_chest.png` | HQ Area Exploration gift chest badge |
+| `drone_claim_btn.png` | Area Exploration Claim |
+| `drone_collect_btn.png` | Idle Reward Collect |
 | `orange_icon_no_badge.png` | Battlefield chest |
 | `alliance_shield_clean.png` | Open Alliance (+ HUD re-open in right stack) |
 | `alliance_gifts_precise.png` | Open Gifts / grid presence |
@@ -56,11 +60,12 @@ Writes annotated PNGs + `logs/debug/scout/report.md`. Flow debug clicks also dum
 | `tech_thumbs_up.png` | Recommended tech (orange + tree band) |
 | `tech_hex_active.png` | Lit hex fallback |
 | `donate_blue.png` | Blue gold Donate only |
-| `hq_world_button.png` / `wilderness_hq_button.png` | Map mode |
+| `hq_world_button.png` / `wilderness_hq_button.png` | Map mode (HQ ↔ Wilderness) |
 
 ### Config keys
 
-- Thresholds including `alliance_techs`, `tech_thumbs_up` (0.78), `donate_blue`, …
+- Thresholds including `drone_gift_chest`, `alliance_techs`, `tech_thumbs_up` (0.78), `donate_blue`, …
+- `drone_gift.min_duration` / `timer_crop_offset` / `modal_timer_region`
 - `alliance_techs.max_donates`
 - `coordinates.dismiss_outside_frac`
 - `watcher.alliance_interval_sec`

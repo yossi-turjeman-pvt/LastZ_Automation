@@ -1,5 +1,5 @@
 """
-Gifts collection flow — Battlefield chest + Alliance Gifts + Alliance Techs donations.
+Gifts collection flow — HQ Drone + Battlefield + Alliance Gifts + Alliance Techs.
 
 Navigation uses template matching so clicks stay accurate on any display size.
 Spatial bands reject high-confidence false positives outside expected UI regions.
@@ -12,6 +12,7 @@ import numpy as np
 from lastz.config import load_config, threshold as cfg_threshold
 from lastz.debug_match import annotate_and_save, in_band
 from lastz.flows.base import dismiss_overlay, ensure_wilderness, reset_ui
+from lastz.flows.drone_gift import run_drone_gift_flow
 from lastz.flows.ui_bands import (
     BAND_ALLIANCE_GRID,
     BAND_HUD_SHIELD,
@@ -527,6 +528,10 @@ def run_alliance_gifts_flow() -> None:
 
     print("Resetting game UI to main base screen...")
     reset_ui(clicks=3, delay=1.5)
+
+    print("[Drone] === HQ Drone Gift (before wilderness gifts) ===")
+    drone_status = run_drone_gift_flow(skip_reset=True)
+    print(f"[Drone] result: {drone_status}")
 
     map_status = ensure_wilderness()
     print(f"[Map] ensure_wilderness → {map_status}")
