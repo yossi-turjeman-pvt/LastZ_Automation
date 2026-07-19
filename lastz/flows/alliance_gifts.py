@@ -22,6 +22,12 @@ from lastz.flows.ui_bands import (
     CLAIM_MAX_Y_FRAC,
 )
 from lastz.input import click, ensure_game_running, focus_game
+from lastz.ocr import (
+    read_ui_text,
+    text_mentions_techs,
+    text_mentions_wrong_alliance_tile,
+    tesseract_available,
+)
 from lastz.runlog import (
     dump_crash,
     log,
@@ -414,34 +420,134 @@ def _best_in_band_template(
     return best
 
 
+def _techs_label_ocr_ok(color: np.ndarray, m: MatchWithBBox, h: int, w: int) -> bool:
+    """OCR a tight crop on the tile title; fuzzy-match Alliance Techs."""
+    if not tesseract_available():
+        print("[Techs] OCR unavailable — cannot confirm label text")
+        return False
+    # Tight title band under the icon (avoid neighboring tiles / Shop)
+    pad_x = max(int(m.phys_w * 0.55), int(0.055 * w))
+    pad_y = max(int(m.phys_h * 0.45), int(0.028 * h))
+    cx, cy = int(m.phys_x), int(m.phys_y)
+    x0 = max(0, cx - pad_x)
+    y0 = max(0, cy - pad_y // 5)
+    text = read_ui_text(color, x0, y0, pad_x * 2, pad_y)
+    if text_mentions_wrong_alliance_tile(text):
+        print(f"[Techs] OCR wrong tile text={text!r}")
+        return False
+    ok = text_mentions_techs(text)
+    print(f"[Techs] OCR confirm tech={ok} text={text!r}")
+    return ok
+
+
+def _techs_via_gifts_neighbor(
+    color: np.ndarray, gray: np.ndarray, h: int, w: int
+) -> MatchWithBBox | None:
+    """
+    Alliance Techs is the left neighbor of Alliance Gifts (same row).
+
+    Prefer OCR confirm; if OCR is empty/noisy (not clearly Shop/Gifts),
+    still click the spatial neighbor — Gifts match is high-confidence.
+    """
+    gifts_thr = cfg_threshold("alliance_gifts")
+    gifts = find_all_templates(gray, "alliance_gifts_precise.png", gifts_thr)
+    gifts_in = [m for m in gifts if _band_ok(m, h, w, BAND_ALLIANCE_GRID)]
+    if not gifts_in:
+        print("[Techs] Gifts neighbor: no Alliance Gifts in grid band")
+        return None
+    gifts_in.sort(key=lambda m: m.confidence, reverse=True)
+    g = gifts_in[0]
+    # Horizontal pitch ≈ one tile width (Gifts bbox is a reliable scale cue)
+    pitch = max(float(g.phys_w) * 1.15, 0.09 * w)
+    cx = g.phys_x - pitch
+    cy = g.phys_y
+    if not (BAND_ALLIANCE_GRID[2] * w <= cx <= BAND_ALLIANCE_GRID[3] * w):
+        print(f"[Techs] Gifts neighbor: estimated Techs x out of band ({cx:.0f})")
+        return None
+    if not (BAND_ALLIANCE_GRID[0] * h <= cy <= BAND_ALLIANCE_GRID[1] * h):
+        print(f"[Techs] Gifts neighbor: estimated Techs y out of band ({cy:.0f})")
+        return None
+
+    tw = max(int(g.phys_w), int(0.08 * w))
+    th = max(int(g.phys_h), int(0.06 * h))
+    cand = MatchWithBBox(cx, cy, tw, th, g.confidence)
+
+    print(
+        f"[Techs] Gifts neighbor: gifts=({g.phys_x:.0f},{g.phys_y:.0f}) "
+        f"-> techs=({cx:.0f},{cy:.0f}) pitch={pitch:.0f}"
+    )
+
+    if not tesseract_available():
+        print("[Techs] Gifts neighbor: OCR unavailable — spatial click")
+        return cand
+
+    # Tight title strip under estimated tile center (not a huge multi-tile crop)
+    label_w = int(0.11 * w)
+    label_h = int(0.040 * h)
+    lx0 = int(cx - label_w / 2)
+    ly0 = int(cy + 0.018 * h)
+    text = read_ui_text(color, lx0, ly0, label_w, label_h)
+
+    if text_mentions_wrong_alliance_tile(text):
+        print(f"[Techs] Gifts neighbor: OCR says wrong tile — abort text={text!r}")
+        return None
+    if text_mentions_techs(text):
+        print(f"[Techs] Gifts neighbor: OCR confirmed Techs text={text!r}")
+        return cand
+
+    # Noisy / empty OCR — trust same-row left-of-Gifts geometry
+    print(
+        f"[Techs] Gifts neighbor: OCR inconclusive text={text!r} — "
+        f"using spatial click (gifts conf={g.confidence:.4f})"
+    )
+    return cand
+
+
 def _open_alliance_techs() -> bool:
-    """Open Techs via microscope in grid band; label only as in-band fallback."""
+    """
+    Open Techs: microscope in band → soft microscope → Gifts left-neighbor
+    (OCR-confirmed) → label template only if OCR says tech.
+    """
     techs_thr = cfg_threshold("alliance_techs")
     print(f"[Techs] Looking for Alliance Techs in grid band (threshold={techs_thr})...")
     color, gray = capture_both()
     h, w = gray.shape[:2]
 
-    # Prefer microscope icon
+    pick: MatchWithBBox | None = None
+    tag = ""
+
+    # 1) Microscope icon
     icon_matches = find_all_templates(gray, "alliance_techs.png", techs_thr)
     icon_in = [m for m in icon_matches if _band_ok(m, h, w, BAND_ALLIANCE_GRID)]
-    pick = None
-    tag = ""
     if icon_in:
         icon_in.sort(key=lambda m: m.confidence, reverse=True)
         pick, tag = icon_in[0], "microscope"
     else:
-        # Soften icon threshold slightly only inside band via lower thr search
-        soft = find_all_templates(gray, "alliance_techs.png", max(0.55, techs_thr - 0.1))
+        soft = find_all_templates(gray, "alliance_techs.png", max(0.50, techs_thr - 0.15))
         soft_in = [m for m in soft if _band_ok(m, h, w, BAND_ALLIANCE_GRID)]
         if soft_in:
             soft_in.sort(key=lambda m: m.confidence, reverse=True)
             pick, tag = soft_in[0], "microscope-soft"
-        else:
-            label_matches = find_all_templates(gray, "alliance_techs_label.png", techs_thr)
-            label_in = [m for m in label_matches if _band_ok(m, h, w, BAND_ALLIANCE_GRID)]
-            if label_in:
-                label_in.sort(key=lambda m: m.confidence, reverse=True)
-                pick, tag = label_in[0], "label"
+
+    # 2) Spatial: left of Alliance Gifts + OCR
+    if pick is None:
+        pick = _techs_via_gifts_neighbor(color, gray, h, w)
+        if pick is not None:
+            tag = "gifts-neighbor"
+
+    # 3) Label template only with OCR confirm (never click Shop on text FP)
+    if pick is None:
+        label_matches = find_all_templates(gray, "alliance_techs_label.png", techs_thr)
+        label_in = [m for m in label_matches if _band_ok(m, h, w, BAND_ALLIANCE_GRID)]
+        label_in.sort(key=lambda m: m.confidence, reverse=True)
+        for m in label_in:
+            if _techs_label_ocr_ok(color, m, h, w):
+                pick, tag = m, "label+ocr"
+                break
+            print(
+                f"[Techs] reject label conf={m.confidence:.4f} at "
+                f"({m.phys_x:.0f},{m.phys_y:.0f}) — OCR not techs"
+            )
 
     if pick is None:
         print("[Techs] FAIL: no Alliance Techs match in alliance grid band.")
@@ -452,6 +558,14 @@ def _open_alliance_techs() -> bool:
     print(
         f"[Techs] Clicking Alliance Techs ({tag}) at logical ({lx:.1f}, {ly:.1f}) "
         f"[conf={pick.confidence:.4f}]"
+    )
+    log_click(
+        "alliance_techs",
+        template=tag,
+        conf=pick.confidence,
+        logical_xy=(lx, ly),
+        phys_xy=(pick.phys_x, pick.phys_y),
+        y_frac=pick.phys_y / h,
     )
     annotate_and_save(
         color,
