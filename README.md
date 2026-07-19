@@ -1,6 +1,6 @@
 # LastZ Automation
 
-macOS automation for **LastZ** (`Survival.exe`) that claims **Alliance Gifts** (Common + Rare) on a timer.
+macOS automation for **LastZ** (`Survival.exe`) that claims **gifts** on a timer: Battlefield chest + Alliance Gifts (Common + Rare).
 
 It works at the OS level only: screen capture + synthetic mouse clicks. It does not modify game files or talk to game servers.
 
@@ -41,8 +41,8 @@ python lastz_watcher.py       # start the watcher loop directly
 
 | # | Option | What it does |
 |---|--------|----------------|
-| 1 | Claim Alliance Gifts (once) | One full Common + Rare claim pass |
-| 2 | Watcher loop | Repeats Alliance Gifts every `alliance_interval_sec` (default **180s**) |
+| 1 | Claim Alliance Gifts (once) | Battlefield chest (if present) + Alliance Common/Rare |
+| 2 | Watcher loop | Repeats the same gifts flow every `alliance_interval_sec` (default **180s**) |
 | 3 | Exit | Quit |
 
 ## Configuration

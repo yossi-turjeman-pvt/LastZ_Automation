@@ -49,11 +49,12 @@ python -m lastz
 Choose **1** (Claim Alliance Gifts once). You should see:
 
 1. UI reset clicks
-2. Alliance menu open
-3. Alliance Gifts open
-4. Common tab claim (Claim All when available)
-5. Rare tab claim
-6. Two outside clicks to close Gifts, then Alliance
+2. Battlefield Gifts chest claimed if the wilderness icon is present (otherwise skipped)
+3. Alliance menu open
+4. Alliance Gifts open
+5. Common tab claim (Claim All when available)
+6. Rare tab claim
+7. Two outside clicks to close Gifts, then Alliance
 
 If nothing happens:
 

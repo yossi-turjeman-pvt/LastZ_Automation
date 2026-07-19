@@ -50,15 +50,16 @@ Templates larger than the screen are skipped safely (no OpenCV assertion crash).
 
 `click(x, y)` sends `MouseMoved` → `LeftMouseDown` → `LeftMouseUp` at logical coordinates.
 
-## Alliance Gifts flow
+## Gifts flow
 
 See [FLOWS.md](FLOWS.md) for the step list. In short:
 
 1. `reset_ui` — outside clicks to clear overlays
-2. Open Alliance → Alliance Gifts (templates)
-3. Common tab — Claim All when present, else individual Claim buttons
-4. Rare tab — individual Claim buttons in the **gift list only** (footer / back-icon matches ignored)
-5. Outside dismiss ×2 — close Gifts, then Alliance
+2. Battlefield Gifts chest on wilderness map (skip if icon absent)
+3. Open Alliance → Alliance Gifts (templates)
+4. Common tab — Claim All when present, else individual Claim buttons
+5. Rare tab — individual Claim buttons in the **gift list only** (footer / back-icon matches ignored)
+6. Outside dismiss ×2 — close Gifts, then Alliance
 
 ## Watcher loop
 

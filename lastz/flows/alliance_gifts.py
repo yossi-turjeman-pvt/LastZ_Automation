@@ -1,15 +1,15 @@
 """
-Flow 1 & 2 — Alliance Gifts (Common tab + Rare tab).
+Alliance Gifts flow — Battlefield chest + Alliance Common/Rare tabs.
 
 Navigation uses template matching so clicks stay accurate on any display size.
 """
 import time
 
-from lastz.config import threshold as cfg_threshold
+from lastz.config import coord_offset, threshold as cfg_threshold
 from lastz.flows.base import dismiss_overlay, reset_ui
 from lastz.input import click, ensure_game_running, focus_game
-from lastz.screen import capture, physical_to_logical
-from lastz.vision import click_template, find_all_templates, find_any
+from lastz.screen import capture, physical_to_logical, scale_capture_offset
+from lastz.vision import click_template, find_all_templates, find_any, find_template
 
 _MAX_INDIVIDUAL_CLAIMS = 15
 # Gift-list Claim buttons sit above the modal footer (back / trash / notifications).
@@ -70,12 +70,61 @@ def _claim_tab(is_common: bool) -> str:
     return f"Claimed {claimed} individual gifts"
 
 
+def _claim_battlefield_gifts() -> str:
+    """Claim Battlefield Gifts from the wilderness chest icon if present."""
+    print("Checking for Battlefield Gifts chest...")
+    screen = capture()
+    orange_match = find_template(
+        screen,
+        "orange_icon_no_badge.png",
+        cfg_threshold("orange_icon"),
+    )
+
+    if orange_match is None:
+        print("-> Battlefield Gifts chest not on screen — skipping.")
+        return "skipped"
+
+    # Offset so we click the chest body, not the red badge number
+    ox, oy = coord_offset("battle_rewards_offset")
+    sox, soy = scale_capture_offset(ox, oy)
+    lx, ly = physical_to_logical(orange_match.phys_x + sox, orange_match.phys_y + soy)
+
+    print(f"-> Opening Battlefield Gifts at logical ({lx:.1f}, {ly:.1f}) [conf={orange_match.confidence:.4f}]")
+    click(lx, ly)
+    time.sleep(2.5)
+
+    screen_modal = capture()
+    claim_match = find_template(
+        screen_modal,
+        "universal_claim_all_button.png",
+        cfg_threshold("claim_all"),
+    )
+
+    if claim_match is not None:
+        clx, cly = physical_to_logical(claim_match.phys_x, claim_match.phys_y)
+        print(f"-> Clicking 'Claim All' at logical ({clx:.1f}, {cly:.1f})...")
+        click(clx, cly)
+        time.sleep(2.0)
+        print("Dismissing Battlefield rewards overlay...")
+        dismiss_overlay()
+    else:
+        print("-> No 'Claim All' button inside Battlefield Gifts modal.")
+
+    print("Closing Battlefield Gifts modal...")
+    dismiss_overlay()
+    return "claimed"
+
+
 def run_alliance_gifts_flow() -> None:
     ensure_game_running()
     focus_game()
 
     print("Resetting game UI to main base screen...")
     reset_ui(clicks=3, delay=1.5)
+
+    # Battlefield chest lives on the wilderness map — claim before opening Alliance UI
+    battlefield_status = _claim_battlefield_gifts()
+    print(f"Battlefield Gifts: {battlefield_status}.")
 
     print("Opening Alliance menu...")
     if click_template("alliance_shield_clean.png", cfg_threshold("alliance_shield"), label="Alliance menu") is None:
