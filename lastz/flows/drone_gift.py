@@ -6,17 +6,24 @@ drone_gift.min_duration (default 08:00:00).
 
 Used at the start of the Alliance Gifts flow (menu 1 / watcher) — not a
 separate menu item. Clicks use template centers; timer crops use
-scale_capture_rect for screen-size independence.
+scale_capture_rect_uniform for screen-size independence.
 """
 import time
 
-from lastz.config import load_config, threshold as cfg_threshold
+import cv2
+
+from lastz.config import load_config, logs_dir, threshold as cfg_threshold
 from lastz.flows.base import dismiss_overlay, reset_ui
 from lastz.flows.hq_nav import is_hq_mode, navigate_to_hq, navigate_to_wilderness
 from lastz.input import click, ensure_game_running, focus_game
 from lastz.ocr import format_duration, parse_duration, read_duration_from_region
 from lastz.runlog import log_click, log_skip
-from lastz.screen import capture, capture_both, physical_to_logical, scale_capture_rect
+from lastz.screen import (
+    capture,
+    capture_both,
+    physical_to_logical,
+    scale_capture_rect_uniform,
+)
 from lastz.vision import Match, find_template
 
 _MIN_DURATION_SEC = 8 * 3600
@@ -34,13 +41,25 @@ def _min_duration() -> int:
 def _timer_crop_offset() -> list[int]:
     cfg = load_config().get("drone_gift") or {}
     raw = cfg.get("timer_crop_offset", [-77, 8, 150, 28])
-    return scale_capture_rect(list(raw))
+    # Uniform scale — anisotropic X/Y scale clips timer digits on ultrawide
+    scaled = scale_capture_rect_uniform(list(raw))
+    # Keep enough vertical room for HH digits (8 vs 2 misread when too flat)
+    min_h = max(28, int(raw[3]))
+    if scaled[3] < min_h:
+        # Grow upward so we don't shift past the label
+        deficit = min_h - scaled[3]
+        scaled[1] -= deficit // 2
+        scaled[3] = min_h
+    if scaled[2] < int(raw[2] * 0.9):
+        scaled[2] = int(raw[2])
+    print(f"[Drone] timer_crop_offset scaled={scaled} (raw={list(raw)})")
+    return scaled
 
 
 def _modal_timer_region() -> list[int]:
     cfg = load_config().get("drone_gift") or {}
     raw = cfg.get("modal_timer_region", [1200, 730, 1200, 130])
-    return scale_capture_rect(list(raw))
+    return scale_capture_rect_uniform(list(raw))
 
 
 def _find_chest(screen) -> Match | None:
@@ -107,7 +126,32 @@ def _read_chest_timer(color, gray, offset: list[int]):
     tx = int(chest.phys_x + offset[0])
     ty = int(chest.phys_y + offset[1])
     tw, th = int(offset[2]), int(offset[3])
+    # Debug: what OCR actually sees (ultrawide crop issues)
+    try:
+        h, w = color.shape[:2]
+        x0, y0 = max(0, tx), max(0, ty)
+        x1, y1 = min(w, tx + tw), min(h, ty + th)
+        crop = color[y0:y1, x0:x1]
+        if crop.size:
+            out = logs_dir() / "debug" / "flow" / "drone_timer_ocr_crop.png"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(out), crop)
+    except Exception as exc:
+        print(f"[Drone] timer crop debug save failed: {exc}")
+
     sec = read_duration_from_region(color, tx, ty, tw, th)
+    # If we got a clean XX:00:00 with hour < 8, retry with a taller crop (8→2 clip)
+    if sec is not None and sec < _min_duration() and sec % 3600 == 0:
+        pad = max(8, th // 3)
+        sec2 = read_duration_from_region(
+            color, tx, max(0, ty - pad), tw, th + 2 * pad
+        )
+        if sec2 is not None and sec2 != sec:
+            print(
+                f"[Drone] timer retry taller crop: "
+                f"{format_duration(sec)} -> {format_duration(sec2)}"
+            )
+            sec = sec2
     return sec, chest
 
 

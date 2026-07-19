@@ -328,6 +328,23 @@ def scale_capture_rect(rect: list[int]) -> list[int]:
     ]
 
 
+def scale_capture_rect_uniform(rect: list[int]) -> list[int]:
+    """
+    Scale [x, y, w, h] with one factor (geometric mean of axis scales).
+
+    Anisotropic scale_capture_rect breaks letterboxed ultrawide (tall ref → short
+    current height): timer crops get too flat and OCR misreads 8 as 2.
+    """
+    import math
+
+    cap_w, cap_h = _last_size()
+    ref_w, ref_h = REF_CAPTURE_SIZE
+    sx = cap_w / ref_w
+    sy = cap_h / ref_h
+    s = math.sqrt(sx * sy)
+    return [int(round(v * s)) for v in rect]
+
+
 def scale_capture_offset(dx: float, dy: float) -> tuple[float, float]:
     """Scale a physical-pixel offset from reference capture size to current capture."""
     cap_w, cap_h = _last_size()
