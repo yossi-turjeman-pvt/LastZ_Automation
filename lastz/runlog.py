@@ -3,17 +3,33 @@ Runtime diagnostics for gifts collection runs.
 
 Writes to stdout and appends to logs/runs.log so a failed run can be shared
 without relying on terminal scrollback alone.
+
+While a flow has timing enabled, every stdout line (including bare print() from
+vision/UI) is prefixed with wall-clock ms + elapsed-since-run-start and mirrored
+to runs.log — so timing analysis is not limited to log() call sites.
 """
 from __future__ import annotations
 
 import datetime
 import platform
+import re
 import subprocess
 import sys
+import time
 import traceback
 from pathlib import Path
+from typing import TextIO
 
 from lastz.config import game_process, logs_dir
+
+# Wall clock for RUN START elapsed deltas (perf_counter).
+_run_t0: float | None = None
+_tee: "_TimestampTee | None" = None
+
+# Lines already stamped by us (avoid double-prefix if something re-prints).
+_TS_PREFIX_RE = re.compile(
+    r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{3})?(?: \+\d+\.\d{2}s)?\] "
+)
 
 
 def _runs_log_path() -> Path:
@@ -22,16 +38,122 @@ def _runs_log_path() -> Path:
     return p
 
 
-def log(msg: str) -> None:
-    """Print and append a timestamped line to logs/runs.log."""
-    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{ts}] {msg}"
-    print(line)
+def _append_runs(line: str) -> None:
     try:
         with open(_runs_log_path(), "a") as f:
             f.write(line + "\n")
     except OSError as e:
-        print(f"[runlog] WARN: could not write runs.log: {e}")
+        # Avoid recursion through tee — write straight to real stderr/stdout.
+        real = sys.__stdout__
+        real.write(f"[runlog] WARN: could not write runs.log: {e}\n")
+        real.flush()
+
+
+def _elapsed_suffix() -> str:
+    if _run_t0 is None:
+        return ""
+    return f" +{time.perf_counter() - _run_t0:.2f}s"
+
+
+def format_log_line(msg: str) -> str:
+    """Build `[YYYY-mm-dd HH:MM:SS.mmm +12.34s] msg` (elapsed omitted before clock start)."""
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    return f"[{ts}{_elapsed_suffix()}] {msg}"
+
+
+def start_run_clock() -> None:
+    """Reset elapsed timer (call once at the very start of a Menu 1 / watcher pass)."""
+    global _run_t0
+    _run_t0 = time.perf_counter()
+
+
+def enable_run_tee() -> None:
+    """Mirror/timestamp all stdout lines into runs.log for the duration of a run."""
+    global _tee
+    if _tee is not None:
+        return
+    _tee = _TimestampTee(sys.stdout)
+    sys.stdout = _tee  # type: ignore[assignment]
+
+
+def disable_run_tee() -> None:
+    """Restore stdout after a run."""
+    global _tee
+    if _tee is None:
+        return
+    _tee.flush()
+    sys.stdout = _tee.real  # type: ignore[assignment]
+    _tee = None
+
+
+def begin_run_logging() -> None:
+    """Start clock + stdout tee (idempotent-ish: always resets the clock)."""
+    start_run_clock()
+    enable_run_tee()
+
+
+def end_run_logging() -> None:
+    disable_run_tee()
+
+
+def log(msg: str) -> None:
+    """Print and append a timestamped line to logs/runs.log."""
+    if _tee is not None:
+        # Tee stamps + mirrors to runs.log.
+        print(msg, flush=True)
+        return
+    line = format_log_line(msg)
+    print(line, flush=True)
+    _append_runs(line)
+
+
+class _TimestampTee:
+    """Buffer stdout, stamp complete lines, echo to terminal + runs.log."""
+
+    def __init__(self, real: TextIO) -> None:
+        self.real = real
+        self._buf = ""
+
+    def write(self, data: str) -> int:
+        if not isinstance(data, str):
+            data = str(data)
+        self._buf += data
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            self._emit(line)
+        return len(data)
+
+    def _emit(self, raw: str) -> None:
+        # Preserve empty lines lightly.
+        if raw == "":
+            self.real.write("\n")
+            self.real.flush()
+            return
+        if _TS_PREFIX_RE.match(raw):
+            stamped = raw
+        else:
+            stamped = format_log_line(raw)
+        self.real.write(stamped + "\n")
+        self.real.flush()
+        _append_runs(stamped)
+
+    def flush(self) -> None:
+        if self._buf:
+            # Incomplete line without newline — still stamp so we don't lose it at end.
+            partial = self._buf
+            self._buf = ""
+            self._emit(partial)
+        self.real.flush()
+
+    def isatty(self) -> bool:
+        return self.real.isatty()
+
+    def fileno(self) -> int:
+        return self.real.fileno()
+
+    @property
+    def encoding(self) -> str | None:
+        return getattr(self.real, "encoding", None)
 
 
 def _git_short_hash() -> str:

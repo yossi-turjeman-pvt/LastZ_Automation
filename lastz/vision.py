@@ -4,6 +4,7 @@ OpenCV template matching with full-dynamic scale and game-window ROI.
 Scale is discovered every run from on-screen anchors (no per-machine calibration).
 Matching is restricted to the game window region so desktop chrome cannot win.
 """
+import time
 from pathlib import Path
 from typing import NamedTuple
 
@@ -132,6 +133,7 @@ def _ensure_scale_calibrated(screen: np.ndarray) -> None:
     if _calibrated_for == shape:
         return
 
+    t0 = time.perf_counter()
     roi, _, _ = game_window_roi(screen)
     expected = _clamp_scale(_expected_scale_for_screen(screen))
     best_scale = expected
@@ -152,6 +154,7 @@ def _ensure_scale_calibrated(screen: np.ndarray) -> None:
                 best_scale = scale
                 best_anchor = tpl_name
 
+    ms = (time.perf_counter() - t0) * 1000.0
     if best_conf >= _ACCEPT_CONF:
         # Modals hide HUD anchors and can invent a bogus scale peak (e.g. 0.40).
         # Prefer the pixel-ratio expectation unless the anchor is clearly strong.
@@ -160,20 +163,21 @@ def _ensure_scale_calibrated(screen: np.ndarray) -> None:
             print(
                 f"[vision] Auto template scale: {_scale_center:.3f} "
                 f"(expected; rejected dubious {best_scale:.3f} "
-                f"anchor={best_anchor} conf={best_conf:.4f})"
+                f"anchor={best_anchor} conf={best_conf:.4f}) ms={ms:.0f}"
             )
         else:
             _scale_center = _clamp_scale(best_scale)
             print(
                 f"[vision] Auto template scale: {_scale_center:.3f} "
-                f"(anchor={best_anchor} conf={best_conf:.4f})"
+                f"(anchor={best_anchor} conf={best_conf:.4f}) ms={ms:.0f}"
             )
     else:
         _scale_center = expected
         print(
             f"[vision] WARN: weak anchors (best conf={best_conf:.4f}). "
             f"Using pixel-ratio scale {_scale_center:.3f}. "
-            f"Keep game on wilderness/base map, fully visible on one display."
+            f"Keep game on wilderness/base map, fully visible on one display. "
+            f"ms={ms:.0f}"
         )
 
     _calibrated_for = shape
@@ -261,6 +265,7 @@ def find_template(
     template_path: Path | None = None,
     scales: list[float] | None = None,
 ) -> Match | None:
+    t0 = time.perf_counter()
     _ensure_scale_calibrated(screen)
 
     tpl_path = template_path or (templates_dir() / template_name)
@@ -278,20 +283,24 @@ def find_template(
 
     best = _match_at_scales(roi, tpl, search_scales)
 
-    # Coarse full-band re-search if local band misses (stuck scale lock).
-    needs_refine = (best is None or best.confidence < threshold) and scales is None
-    if needs_refine:
-        coarse = _match_at_scales(roi, tpl, _full_scale_band())
-        if coarse is not None and (best is None or coarse.confidence > best.confidence):
-            best = coarse
-            print(
-                f"[vision] '{template_name}' refined via full scale band "
-                f"(conf={best.confidence:.4f})"
-            )
+    # Full-band only on a *near miss* (local peak close to threshold).
+    # Blind full-band on every miss costs ~10–34s on ultrawide — skip it.
+    refined = False
+    if scales is None and best is not None and best.confidence < threshold:
+        near = max(0.55, threshold - 0.15)
+        if best.confidence >= near:
+            coarse = _match_at_scales(roi, tpl, _full_scale_band())
+            if coarse is not None and coarse.confidence > best.confidence:
+                best = coarse
+                refined = True
 
+    ms = (time.perf_counter() - t0) * 1000.0
     if best is None:
         sh, sw = roi.shape[:2]
-        print(f"[vision] '{template_name}' — no valid scale fit for ROI ({sw}x{sh})")
+        print(
+            f"[vision] '{template_name}' — no valid scale fit for ROI "
+            f"({sw}x{sh}) ms={ms:.0f}"
+        )
         return None
 
     # Remap ROI-local center → full capture coordinates
@@ -301,7 +310,11 @@ def find_template(
         confidence=best.confidence,
     )
 
-    print(f"[vision] '{template_name}' match confidence = {best.confidence:.4f} (threshold {threshold})")
+    refine_bit = " refined=full_band" if refined else ""
+    print(
+        f"[vision] '{template_name}' match confidence = {best.confidence:.4f} "
+        f"(threshold {threshold}){refine_bit} ms={ms:.0f}"
+    )
 
     if best.confidence < threshold:
         return None
@@ -353,6 +366,7 @@ def find_all_templates(
     exclude_regions: list[tuple[int, int, int, int]] | None = None,
     scales: list[float] | None = None,
 ) -> list[MatchWithBBox]:
+    t0 = time.perf_counter()
     _ensure_scale_calibrated(screen)
 
     tpl_path = template_path or (templates_dir() / template_name)
@@ -390,25 +404,12 @@ def find_all_templates(
         if len(boxes) >= 80:
             break
 
-    if not boxes and scales is None:
-        # Coarse full-band pass for multi-match (e.g. claim buttons)
-        for scale in _full_scale_band():
-            scaled_tpl, tw, th = _scaled_template(tpl, scale)
-            if th > sh or tw > sw:
-                continue
-            result = cv2.matchTemplate(roi, scaled_tpl, cv2.TM_CCOEFF_NORMED)
-            ys, xs = np.where(result >= threshold)
-            if len(xs) == 0:
-                continue
-            confidences = result[ys, xs]
-            for x, y, conf in zip(xs.tolist(), ys.tolist(), confidences.tolist()):
-                boxes.append([x + ox, y + oy, x + ox + tw, y + oy + th, float(conf)])
-                if len(boxes) >= 80:
-                    break
-            if len(boxes) >= 80:
-                break
-
     if not boxes:
+        ms = (time.perf_counter() - t0) * 1000.0
+        print(
+            f"[vision] '{template_name}' all-match: 0 found "
+            f"(threshold {threshold}) ms={ms:.0f}"
+        )
         return []
 
     if len(boxes) > 40:
@@ -439,7 +440,11 @@ def find_all_templates(
         )
 
     matches.sort(key=lambda m: m.confidence, reverse=True)
-    print(f"[vision] '{template_name}' all-match: {len(matches)} found (threshold {threshold})")
+    ms = (time.perf_counter() - t0) * 1000.0
+    print(
+        f"[vision] '{template_name}' all-match: {len(matches)} found "
+        f"(threshold {threshold}) ms={ms:.0f}"
+    )
     return matches
 
 

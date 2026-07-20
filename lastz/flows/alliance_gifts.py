@@ -29,7 +29,9 @@ from lastz.ocr import (
     tesseract_available,
 )
 from lastz.runlog import (
+    begin_run_logging,
     dump_crash,
+    end_run_logging,
     log,
     log_click,
     log_gifts_modal_state,
@@ -38,7 +40,14 @@ from lastz.runlog import (
     log_step,
 )
 from lastz.screen import capture, capture_both, physical_to_logical
-from lastz.vision import MatchWithBBox, click_template, find_all_templates, find_any, find_template
+from lastz.vision import (
+    MatchWithBBox,
+    click_template,
+    ensure_template_scale,
+    find_all_templates,
+    find_any,
+    find_template,
+)
 
 _MAX_INDIVIDUAL_CLAIMS = 15
 _CLAIM_MIN_GREEN_RATIO = 0.20
@@ -667,16 +676,25 @@ def _donate_alliance_techs() -> str:
 
 
 def run_alliance_gifts_flow(*, source: str = "menu") -> None:
-    ensure_game_running()
-    focus_game()
-
+    begin_run_logging()
     try:
+        ensure_game_running()
+        log("[Timing] focus_game start")
+        focus_game()
+        log("[Timing] focus_game done")
+
         # Capture once so run header can include capture size + scale.
-        capture()
+        log("[Timing] first capture start")
+        screen = capture()
+        log("[Timing] first capture done")
+        log("[Timing] scale calibrate start")
+        ensure_template_scale(screen)
+        log("[Timing] scale calibrate done")
         log_run_header(source=source)
 
-        print("Resetting UI (Escape; Cancel if Quit Tips)...")
+        log("[Timing] reset_ui start")
         reset_ui(clicks=3, delay=1.0)
+        log("[Timing] reset_ui done")
 
         log_step("Drone", "info", "start")
         drone_status = run_drone_gift_flow(skip_reset=True)
@@ -798,8 +816,10 @@ def run_alliance_gifts_flow(*, source: str = "menu") -> None:
             log_step("Trucks", "pass", trucks_status)
 
         log_step("Done", "pass", "gifts_collection_complete")
-        print("Gifts collection flow complete!")
+        log("Gifts collection flow complete!")
 
     except Exception as exc:
         dump_crash(exc, prefix="crash_gifts")
         raise
+    finally:
+        end_run_logging()

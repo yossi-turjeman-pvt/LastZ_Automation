@@ -185,6 +185,9 @@ def _gate_timer_reads(
             continue
         readings.append(sec)
         print(f"-> Timer read {i + 1}/{attempts}: {format_duration(sec)}")
+        # Clearly not ready — don't burn more OCR reads (~15s each on ultrawide).
+        if sec < min_sec:
+            return False, chest_match, readings, format_duration(sec)
 
     if chest_match is None:
         return False, None, readings, "no chest visible"

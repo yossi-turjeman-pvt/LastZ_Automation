@@ -46,7 +46,10 @@ _TRADE_RE = re.compile(r"(\d)\s*/\s*4")
 _run_counter = 0  # process-lifetime gifts-run count for open_every_n_runs
 
 # Merge markers within this Y-frac into one track/slot row
-_SLOT_Y_MERGE = 0.055
+_SLOT_Y_MERGE = 0.10
+# Empty-slot silhouettes leave paint near the green + — not a real truck.
+# Keep this below typical inter-slot spacing (~0.10) so adjacent rows stay distinct.
+_BLOB_NEAR_PLUS_Y = 0.08
 # Highway scan — find ALL tracks here (not a "upper only" lock)
 _DEFAULT_HIGHWAY_BAND = [0.10, 0.78, 0.28, 0.72]
 
@@ -290,29 +293,40 @@ def _find_occupied_tracks(gray: np.ndarray, color: np.ndarray) -> list[SlotTrack
     Occupied tracks: arrived claim chests + en-route truck-colored blobs.
 
     Needed so the upper row is still recognized when it has no +.
+    Chests use the same Y band as claim clicks (yf≥0.15) — header FPs
+    around yf~0.12 must not block the real upper empty +.
     """
     h, w = gray.shape[:2]
     band = _highway_band()
     yf0, yf1, xf0, xf1 = band
+    # Match _claim_arrived spatial gate (reject top chrome / header FPs)
+    chest_yf0, chest_yf1 = max(yf0, 0.15), min(yf1, 0.60)
     out: list[SlotTrack] = []
 
     chest_thr = cfg_threshold("trucks_claim_chest")
-    for m in find_all_templates(gray, "trucks_claim_chest.png", max(0.55, chest_thr - 0.10)):
-        if _in_highway(m, h, w, band):
-            out.append(
-                SlotTrack("occupied", m.phys_x, m.phys_y, m.confidence, "chest")
+    for m in find_all_templates(gray, "trucks_claim_chest.png", chest_thr):
+        yf = m.phys_y / h
+        xf = m.phys_x / w
+        if not (chest_yf0 <= yf <= chest_yf1 and xf0 <= xf <= xf1):
+            log(
+                f"[Trucks] ignore chest FP outside slot band "
+                f"(yf={yf:.3f} xf={xf:.3f})"
             )
+            continue
+        out.append(
+            SlotTrack("occupied", m.phys_x, m.phys_y, m.confidence, "chest")
+        )
 
-    # En-route trucks: saturated non-green blobs in the highway column
-    y0, y1 = int(yf0 * h), int(yf1 * h)
+    # En-route trucks: vivid orange/purple paint (empty silhouettes are gray —
+    # low sat — and must not count as occupied).
+    y0, y1 = int(chest_yf0 * h), int(yf1 * h)
     x0, x1 = int(xf0 * w), int(xf1 * w)
     roi = color[y0:y1, x0:x1]
     if roi.size == 0:
         return out
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    # Truck paint (orange / purple / cyan-ish / warm) — exclude pure green +
-    warm = cv2.inRange(hsv, (0, 60, 70), (35, 255, 255))
-    purple = cv2.inRange(hsv, (115, 50, 50), (170, 255, 255))
+    warm = cv2.inRange(hsv, (5, 110, 110), (28, 255, 255))
+    purple = cv2.inRange(hsv, (125, 90, 90), (160, 255, 255))
     paint = cv2.bitwise_or(warm, purple)
     green_plus = cv2.inRange(hsv, (40, 100, 100), (90, 255, 255))
     paint = cv2.bitwise_and(paint, cv2.bitwise_not(green_plus))
@@ -323,13 +337,54 @@ def _find_occupied_tracks(gray: np.ndarray, color: np.ndarray) -> list[SlotTrack
         a = int(stats[i, cv2.CC_STAT_AREA])
         bw = int(stats[i, cv2.CC_STAT_WIDTH])
         bh = int(stats[i, cv2.CC_STAT_HEIGHT])
-        # Truck-sized, not tiny UI chrome / not huge panels
-        if not (800 <= a <= 80000 and 25 <= bw <= 280 and 20 <= bh <= 200):
+        # Real en-route truck; empty silhouette crumbs are smaller / filtered by sat
+        if not (2000 <= a <= 80000 and 30 <= bw <= 280 and 25 <= bh <= 200):
             continue
         cx = float(cents[i][0] + x0)
         cy = float(cents[i][1] + y0)
         out.append(SlotTrack("occupied", cx, cy, 0.75, "truck_blob"))
     return out
+
+
+def _filter_silhouette_blobs(
+    pluses: list[SlotTrack], occupied: list[SlotTrack], h: int
+) -> list[SlotTrack]:
+    """
+    Drop truck_blob FPs from empty-slot silhouettes.
+
+    Bug we hit: all four green + empty, but warm gray outline paint made a
+    fake occupied track at yf~0.155 above the real upper + at yf~0.273.
+    """
+    if not occupied:
+        return []
+    if not pluses:
+        return occupied
+
+    top_plus_y = min(p.phys_y for p in pluses)
+    kept: list[SlotTrack] = []
+    for o in occupied:
+        if o.source != "truck_blob":
+            kept.append(o)
+            continue
+        # Same row as a green + → empty silhouette, not an en-route truck
+        near = any(
+            abs(o.phys_y - p.phys_y) / h <= _BLOB_NEAR_PLUS_Y for p in pluses
+        )
+        if near:
+            log(
+                f"[Trucks] ignore truck_blob near empty + "
+                f"(blob_yf={o.phys_y / h:.3f})"
+            )
+            continue
+        # Phantom row above every visible + when all slots show + (4 empty)
+        if len(pluses) >= 4 and o.phys_y < top_plus_y - 0.02 * h:
+            log(
+                f"[Trucks] ignore truck_blob above top + with {len(pluses)} empty "
+                f"slots (blob_yf={o.phys_y / h:.3f} top_plus_yf={top_plus_y / h:.3f})"
+            )
+            continue
+        kept.append(o)
+    return kept
 
 
 def _cluster_tracks(marks: list[SlotTrack], h: int) -> list[SlotTrack]:
@@ -362,10 +417,14 @@ def _discover_all_tracks(gray: np.ndarray, color: np.ndarray) -> list[SlotTrack]
     Recognize every highway track/slot on screen (empty + occupied), top→bottom.
 
     Strategy: see ALL rows, then callers use only the uppermost.
+    Green + is authoritative for empty; truck_blob near/+above a + is discarded.
     """
     h = gray.shape[0]
-    marks = _find_empty_pluses(gray, color) + _find_occupied_tracks(gray, color)
-    tracks = _cluster_tracks(marks, h)
+    pluses = _find_empty_pluses(gray, color)
+    occupied = _filter_silhouette_blobs(
+        pluses, _find_occupied_tracks(gray, color), h
+    )
+    tracks = _cluster_tracks(pluses + occupied, h)
     if not tracks:
         log("[Trucks] track discovery: none found on highway")
         return []
@@ -623,11 +682,18 @@ def _find_go(gray: np.ndarray) -> Match | None:
 
 
 def _click_refresh() -> bool:
-    thr = cfg_threshold("trucks_refresh")
+    thr = float(cfg_threshold("trucks_refresh"))
+    # Soft floor: after Tips Confirm the icon can read ~0.65 (seen live @ 0.650).
+    soft = min(thr, 0.62)
     color, gray = capture_both()
     h, w = gray.shape[:2]
-    m = find_template(gray, "trucks_refresh.png", thr)
+    m = find_template(gray, "trucks_refresh.png", soft)
     if m is not None and 0.20 <= m.phys_y / h <= 0.60 and m.phys_x / w >= 0.45:
+        if m.confidence < thr:
+            log(
+                f"[Trucks] refresh soft-accept conf={m.confidence:.3f} "
+                f"(cfg thr={thr:.2f})"
+            )
         _click_match(m, "trucks_refresh", "trucks_refresh.png")
         time.sleep(2.0)
         return True
@@ -636,7 +702,7 @@ def _click_refresh() -> bool:
     x0, x1 = int(0.50 * w), int(0.78 * w)
     roi = color[y0:y1, x0:x1]
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    orange = cv2.inRange(hsv, (5, 120, 120), (25, 255, 255))
+    orange = cv2.inRange(hsv, (5, 100, 100), (28, 255, 255))
     orange = cv2.morphologyEx(orange, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     n, _, stats, cents = cv2.connectedComponentsWithStats(orange, 8)
     best = None
@@ -648,7 +714,7 @@ def _click_refresh() -> bool:
         if a < 400 or bw < 25 or bh < 25 or a > 25000:
             continue
         circ = min(bw, bh) / max(bw, bh)
-        if circ < 0.7:
+        if circ < 0.65:
             continue
         score = circ * min(a, 5000)
         if score > best_score:
@@ -659,67 +725,110 @@ def _click_refresh() -> bool:
                 confidence=0.80,
             )
     if best is None:
+        log("[Trucks] refresh button not found (template+HSV miss)")
         return False
+    log("[Trucks] refresh via orange-circle fallback")
     _click_match(best, "trucks_refresh_hsv", "trucks_refresh.png")
     time.sleep(2.0)
     return True
 
 
-def _handle_tips_modal(allow_purple: bool) -> str:
+def _picker_go_match(gray: np.ndarray) -> Match | None:
     """
-    After refresh, a Tips modal may ask to keep a purple high-quality truck.
+    True Go when the truck-picker modal is open (bottom center).
 
-    Returns: 'accepted' | 'dismissed' | 'none'
+    Requires strong confidence — weak FPs after a closed picker must not
+    look like "still open" (that caused a fake sent:orange).
     """
-    color, gray = capture_both()
+    thr = max(cfg_threshold("trucks_go"), 0.90)
+    h, w = gray.shape[:2]
+    m = find_template(gray, "trucks_go.png", thr)
+    if m is not None and m.phys_y / h >= 0.78 and 0.35 <= m.phys_x / w <= 0.65:
+        return m
+    return None
+
+
+def _find_tips_confirm(color: np.ndarray, go: Match | None = None) -> Match | None:
+    """
+    Yellow/orange Confirm on the purple-refresh Tips dialog (left button).
+
+    Dialog: Confirm (yellow, left) | Cancel (blue, right). Never click Cancel/X.
+    """
     h, w = color.shape[:2]
-    # Look for Confirm-like wide orange button in mid modal (not Go at bottom)
-    y0, y1 = int(0.45 * h), int(0.75 * h)
-    x0, x1 = int(0.30 * w), int(0.70 * w)
+    # Tips buttons sit mid-screen, above the picker Go bar
+    y0, y1 = int(0.38 * h), int(0.72 * h)
+    x0, x1 = int(0.28 * w), int(0.72 * w)
     roi = color[y0:y1, x0:x1]
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    orange = cv2.inRange(hsv, (5, 100, 120), (25, 255, 255))
+    orange = cv2.inRange(hsv, (5, 100, 120), (28, 255, 255))
     orange = cv2.morphologyEx(orange, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
     n, _, stats, cents = cv2.connectedComponentsWithStats(orange, 8)
-    confirm = None
+    candidates: list[Match] = []
     for i in range(1, n):
         a = int(stats[i, cv2.CC_STAT_AREA])
         bw = int(stats[i, cv2.CC_STAT_WIDTH])
         bh = int(stats[i, cv2.CC_STAT_HEIGHT])
-        if a < 1500 or bw / max(bh, 1) < 1.8:
+        if a < 1200 or bw / max(bh, 1) < 1.6:
             continue
-        confirm = Match(
-            phys_x=float(cents[i][0] + x0),
-            phys_y=float(cents[i][1] + y0),
-            confidence=0.80,
-        )
-        break
-    # Also require "Tips" / unusual layout — if Go is still the bottom button and
-    # no mid Confirm, treat as no Tips.
-    go = find_template(gray, "trucks_go.png", cfg_threshold("trucks_go"))
+        cx = float(cents[i][0] + x0)
+        cy = float(cents[i][1] + y0)
+        yf = cy / h
+        # Real Confirm sits on the dialog button row (~0.55–0.65), not truck art higher up
+        if not (0.52 <= yf <= 0.68):
+            continue
+        # Confirm is the LEFT yellow button (Cancel is blue on the right)
+        if cx / w > 0.52:
+            continue
+        if go is not None and go.phys_y - cy < 80:
+            continue
+        candidates.append(Match(phys_x=cx, phys_y=cy, confidence=0.80))
+    if not candidates:
+        return None
+    # Prefer lower-left among mid-modal hits (button row, not truck art)
+    candidates.sort(key=lambda m: (m.phys_y, m.phys_x))
+    return candidates[-1]
+
+
+def _handle_tips_modal(_allow_purple: bool) -> str:
+    """
+    After Refresh on a non-wanted truck (often purple), Tips asks to confirm
+    refreshing away from it. Click Confirm to complete the refresh.
+
+    Returns: 'confirmed' | 'none' | 'picker_closed'
+
+    Never Escape / outside-click / Cancel — those keep purple or close picker.
+    """
+    color, gray = capture_both()
+    go = _picker_go_match(gray)
+    if go is None:
+        log("[Trucks] Tips check: strong Go not visible — still scanning Confirm")
+
+    confirm = _find_tips_confirm(color, go)
     if confirm is None:
         return "none"
-    if go is not None and abs(confirm.phys_y - go.phys_y) < 40:
-        return "none"  # that was Go, not Tips Confirm
 
-    if allow_purple:
-        log("[Trucks] Tips modal — Confirm (allow_purple_trucks)")
-        _click_match(confirm, "trucks_tips_confirm", "tips_confirm")
-        time.sleep(1.5)
-        return "accepted"
-
-    log("[Trucks] Tips modal — dismiss (want orange, not purple)")
-    dismiss_overlay(delay=1.2)
-    return "dismissed"
+    log("[Trucks] Tips modal — Confirm refresh (discard current truck)")
+    _click_match(confirm, "trucks_tips_confirm", "tips_confirm")
+    time.sleep(1.5)
+    _, gray2 = capture_both()
+    if _picker_go_match(gray2) is None:
+        log("[Trucks] WARN: picker closed after Tips Confirm")
+        return "picker_closed"
+    return "confirmed"
 
 
 def _refresh_until_wanted(allow_purple: bool, max_refreshes: int) -> TruckColor:
     """
     Refresh until orange (or purple if allowed). Logs color every round.
 
-    Returns the last classified color — caller MUST refuse Go unless wanted.
+    Flow: not wanted → click Refresh → Confirm Tips if shown → re-sample.
+    If Tips is already up (blocking Refresh), Confirm first then retry Refresh.
     """
-    color, _ = capture_both()
+    color, gray = capture_both()
+    if _picker_go_match(gray) is None:
+        log("[Trucks] picker Go missing at start — abort refresh loop")
+        return "unknown"
+
     sample = _sample_picker_color(color)
     _log_color_round(
         sample,
@@ -734,15 +843,69 @@ def _refresh_until_wanted(allow_purple: bool, max_refreshes: int) -> TruckColor:
 
     for i in range(max_refreshes):
         round_i = i + 1
+
+        # Tips already open (e.g. last Confirm miss) — clear it before Refresh
+        pre = _handle_tips_modal(allow_purple)
+        if pre == "picker_closed":
+            log("[Trucks] abort refresh — picker closed during Tips handling")
+            return "unknown"
+        if pre == "confirmed":
+            color, gray = capture_both()
+            if _picker_go_match(gray) is None:
+                return "unknown"
+            sample = _sample_picker_color(color)
+            _log_color_round(
+                sample,
+                color,
+                round_i=round_i,
+                max_refreshes=max_refreshes,
+                phase=f"after_stale_tips_{round_i}",
+                allow_purple=allow_purple,
+                tips=pre,
+            )
+            if _is_wanted_color(sample.kind, allow_purple):
+                return sample.kind
+            # Still not wanted — fall through and Refresh again
+
         if not _click_refresh():
+            # Refresh often fails while Tips covers the button — Confirm then retry once
+            tips_block = _handle_tips_modal(allow_purple)
+            if tips_block == "confirmed":
+                log("[Trucks] Tips was blocking Refresh — Confirmed, retrying Refresh")
+                if not _click_refresh():
+                    log(
+                        f"[Trucks] color round={round_i}/{max_refreshes} "
+                        f"phase=refresh_click_failed_after_tips "
+                        f"decision=stop_no_refresh_btn (last_result={sample.kind})"
+                    )
+                    _, g = capture_both()
+                    return sample.kind if _picker_go_match(g) is not None else "unknown"
+            elif tips_block == "picker_closed":
+                log("[Trucks] abort refresh — picker closed during Tips handling")
+                return "unknown"
+            else:
+                log(
+                    f"[Trucks] color round={round_i}/{max_refreshes} "
+                    f"phase=refresh_click_failed decision=stop_no_refresh_btn "
+                    f"(last_result={sample.kind})"
+                )
+                _, g = capture_both()
+                return sample.kind if _picker_go_match(g) is not None else "unknown"
+
+        tips = _handle_tips_modal(allow_purple)
+        if tips == "picker_closed":
+            log("[Trucks] abort refresh — picker closed during Tips handling")
+            return "unknown"
+
+        color, gray = capture_both()
+        if _picker_go_match(gray) is None:
             log(
                 f"[Trucks] color round={round_i}/{max_refreshes} "
-                f"phase=refresh_click_failed decision=stop_no_refresh_btn "
-                f"(last_result={sample.kind})"
+                f"phase=picker_closed_after_refresh decision=abort "
+                f"(last_result={sample.kind}) — will NOT treat highway as orange"
             )
-            break
-        tips = _handle_tips_modal(allow_purple)
-        color, _ = capture_both()
+            return "unknown"
+
         sample = _sample_picker_color(color)
         _log_color_round(
             sample,
@@ -753,13 +916,13 @@ def _refresh_until_wanted(allow_purple: bool, max_refreshes: int) -> TruckColor:
             allow_purple=allow_purple,
             tips=tips,
         )
-        if tips == "accepted" and allow_purple:
-            return "purple" if sample.kind == "unknown" else sample.kind
         if _is_wanted_color(sample.kind, allow_purple):
             return sample.kind
 
-    # Out of refreshes / tickets — DO NOT send junk (caller aborts)
-    color, _ = capture_both()
+    color, gray = capture_both()
+    if _picker_go_match(gray) is None:
+        log("[Trucks] refresh end — picker not open; color sample ignored for send")
+        return "unknown"
     sample = _sample_picker_color(color)
     _log_color_round(
         sample,
@@ -785,12 +948,20 @@ def _send_upper_truck(allow_purple: bool, max_refreshes: int) -> str:
 
     kind = _refresh_until_wanted(allow_purple, max_refreshes)
     if not _is_wanted_color(kind, allow_purple):
-        log(f"[Trucks] REFUSING Go — color={kind} (want orange only)")
+        want = "orange|purple" if allow_purple else "orange"
+        log(f"[Trucks] REFUSING Go — color={kind} (want {want})")
         _exit_trucks()
-        return f"aborted: color={kind} (not orange)"
+        return f"aborted: color={kind} (not {want})"
 
-    # Re-check color right before Go (UI can change; never trust a stale label)
+    # Re-check color + strong Go right before send
+    go_thr = max(cfg_threshold("trucks_go"), 0.92)
     color_final, gray2 = capture_both()
+    go = _find_go(gray2)
+    if go is None or go.confidence < go_thr:
+        conf = f"{go.confidence:.3f}" if go is not None else "none"
+        log(f"[Trucks] REFUSING Go — weak/missing conf={conf} (need >={go_thr:.2f})")
+        _exit_trucks()
+        return f"aborted: weak Go conf={conf}"
     sample_final = _sample_picker_color(color_final)
     _log_color_round(
         sample_final,
@@ -803,18 +974,9 @@ def _send_upper_truck(allow_purple: bool, max_refreshes: int) -> str:
     if not _is_wanted_color(sample_final.kind, allow_purple):
         log(f"[Trucks] REFUSING Go — pre-click recheck color={sample_final.kind}")
         _exit_trucks()
-        return f"aborted: recheck color={sample_final.kind} (not orange)"
+        return f"aborted: recheck color={sample_final.kind}"
 
     log(f"[Trucks] Sending truck color={sample_final.kind}")
-    go = _find_go(gray2)
-    if go is None:
-        _exit_trucks()
-        return "failed: Go button not found"
-    # Hard floor — never accept the ~0.837 false Go that logged fake sends
-    if go.confidence < 0.92:
-        log(f"[Trucks] REFUSING Go — weak conf={go.confidence:.3f} (need >=0.92)")
-        _exit_trucks()
-        return f"aborted: weak Go conf={go.confidence:.3f}"
     _click_match(go, "trucks_go", "trucks_go.png")
     time.sleep(2.2)
     return f"sent:{sample_final.kind}"
