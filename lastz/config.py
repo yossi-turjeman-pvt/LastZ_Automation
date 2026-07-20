@@ -85,12 +85,24 @@ def watcher_cfg() -> dict:
 def trucks_cfg() -> dict:
     """Trucks flow toggles; defaults keep flow on and orange-only."""
     cfg = load_config().get("trucks") or {}
+    # Wide highway scan to discover ALL tracks, then code uses uppermost only.
+    band = cfg.get("highway_band") or cfg.get("upper_plus_band") or [0.10, 0.78, 0.28, 0.72]
+    if len(band) < 4:
+        band = [0.10, 0.78, 0.28, 0.72]
     return {
         "include_trucks_flow": bool(cfg.get("include_trucks_flow", True)),
         "allow_purple_trucks": bool(cfg.get("allow_purple_trucks", False)),
         "max_refreshes": int(cfg.get("max_refreshes", 15)),
         # Open on badge always; also every Nth gifts run (send without badge).
         "open_every_n_runs": max(1, int(cfg.get("open_every_n_runs", 5))),
+        "highway_band": [
+            float(band[0]),
+            float(band[1]),
+            float(band[2]),
+            float(band[3]),
+        ],
+        # Save ROI+mask crops under logs/debug/trucks/color/ for human VERIFY
+        "save_color_debug": bool(cfg.get("save_color_debug", True)),
     }
 
 

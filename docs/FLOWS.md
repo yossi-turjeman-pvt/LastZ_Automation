@@ -21,7 +21,7 @@ One flow. Not a separate menu item. Clicks are full-dynamic (template centers + 
 11. **Alliance open check** — if grid tiles (`alliance_techs` / `alliance_gifts`) in mid band → stay; else re-open only via HUD shield in **right-stack** band (never center-screen FPs).
 12. **Alliance Techs** — open tile via microscope in grid band; if badge breaks icon match, use **left neighbor of Alliance Gifts** with OCR confirm (`tech` in label); label template only if OCR confirms (never bare text FP → Shop). Then thumbs with **orange HSV + tree band**; else lit hex; **blue** Donate only.
 13. Dismiss Techs + Alliance.
-14. **Trucks** (if `trucks.include_trucks_flow`, default true) — open when left-HUD icon has a **red badge**, or every `open_every_n_runs` gifts runs (default 5). Then: My Truck → claim chest(s) → if trade &lt; 4/4 and upper slot has green `+`, open picker → refresh (tickets OK, capped by `max_refreshes`) until orange (or purple if `allow_purple_trucks`) → Go → **Escape**. Upper slot en route with no chest → leave it.
+14. **Trucks** (if `trucks.include_trucks_flow`, default true) — open when left-HUD icon has a **red badge**, or every `open_every_n_runs` gifts runs (default 5). Then: My Truck → claim chest(s) → if trade &lt; 4/4: **discover all highway tracks** (empty `+` + occupied chests/trucks in `highway_band`) → use **only the uppermost**; if that row is empty, refresh for orange (or purple if `allow_purple_trucks`) → **Go only if color wanted** and Go conf ≥ 0.92; if upper occupied → **leave it** (ignore lower empties). One truck at a time.
 
 ### Spatial bands (`lastz/flows/ui_bands.py`)
 

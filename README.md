@@ -93,7 +93,7 @@ In order:
    Opens Alliance Techs, picks a recommended tech (orange thumbs-up) or a lit hex, then clicks the **blue** Donate button until it is no longer blue / available (capped by `alliance_techs.max_donates`).
 
 6. **Trucks** (when `trucks.include_trucks_flow` is true — default)  
-   Opens only if the left-HUD truck icon has a **red badge**, or on every **`open_every_n_runs`** gifts run (default **5**). Then: **My Truck** → claim arrived chest → if under **4/4** and the **upper** slot is empty, refresh for **orange** (unless `allow_purple_trucks`) → **Go** → **Escape**. Upper slot en route → leave it.
+   Opens only if the left-HUD truck icon has a **red badge**, or on every **`open_every_n_runs`** gifts run (default **5**). Then: **My Truck** → claim arrived chest → if under **4/4**, **discover all tracks** on the highway → act on **only the uppermost**; if that track is empty, refresh for **orange** (unless `allow_purple_trucks`) → **Go only when color matches** (Go conf ≥ 0.92). If upper is occupied → **leave it** (never click lower `+`). **One truck at a time.**
 
 ### What it does **not** collect
 
@@ -214,7 +214,9 @@ All of these live in [`config.yaml`](config.yaml). Restart / re-run the menu aft
 |------|---------|---------|
 | `trucks.include_trucks_flow` | `true` | `false` = skip trucks entirely (manual picking) |
 | `trucks.allow_purple_trucks` | `false` | `false` = refresh for **orange**; `true` = purple OK too |
-| `trucks.max_refreshes` | `15` | Safety cap while refreshing (ticket cost `N/1` is allowed; not paid diamonds) |
+| `trucks.max_refreshes` | `15` | Safety cap while refreshing (ticket cost `N/1` OK). If still not orange → abort, never send junk. |
+| `trucks.highway_band` | `[0.10, 0.78, 0.28, 0.72]` | Scan band to discover **all** tracks; code then uses **uppermost only**. |
+| `trucks.save_color_debug` | `true` | Save ROI+mask crops under `logs/debug/trucks/color/` so you can VERIFY labels. |
 | `trucks.open_every_n_runs` | `5` | Also open every Nth gifts run (even without a badge). **Badge always opens immediately.** |
 
 ### Vision thresholds

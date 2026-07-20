@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import cv2
 import numpy as np
 
 from lastz.config import threshold as cfg_threshold
 from lastz.config import trucks_cfg
+from lastz.debug_match import debug_dir
 from lastz.flows.base import dismiss_overlay, ensure_wilderness
 from lastz.input import click, press_escape
 from lastz.runlog import log, log_click, log_skip, log_step
@@ -29,9 +30,25 @@ except ImportError:
     pytesseract = None  # type: ignore
 
 TruckColor = Literal["orange", "purple", "other", "unknown"]
+SlotKind = Literal["empty", "occupied"]
+
+
+class ColorSample(NamedTuple):
+    """Picker color classification + raw pixel counts for runs.log."""
+
+    kind: TruckColor
+    orange_px: int
+    purple_px: int
+    green_px: int
+
 
 _TRADE_RE = re.compile(r"(\d)\s*/\s*4")
 _run_counter = 0  # process-lifetime gifts-run count for open_every_n_runs
+
+# Merge markers within this Y-frac into one track/slot row
+_SLOT_Y_MERGE = 0.055
+# Highway scan — find ALL tracks here (not a "upper only" lock)
+_DEFAULT_HIGHWAY_BAND = [0.10, 0.78, 0.28, 0.72]
 
 
 def _click_match(m: Match, label: str, template: str) -> None:
@@ -210,73 +227,378 @@ def _read_trade_count(color: np.ndarray) -> int | None:
     return int(m.group(1))
 
 
-def _upper_plus(gray: np.ndarray, color: np.ndarray) -> Match | None:
-    """Uppermost empty-slot green + on My Truck highway."""
+def _highway_band() -> tuple[float, float, float, float]:
+    """Wide band to discover every truck track/slot (yf0, yf1, xf0, xf1)."""
+    band = trucks_cfg().get("highway_band") or list(_DEFAULT_HIGHWAY_BAND)
+    return float(band[0]), float(band[1]), float(band[2]), float(band[3])
+
+
+class SlotTrack(NamedTuple):
+    """One My-Truck highway row (empty + or occupied truck/chest)."""
+
+    kind: SlotKind
+    phys_x: float
+    phys_y: float
+    confidence: float
+    source: str  # plus | chest | truck_blob
+
+
+def _in_highway(m: Match, h: int, w: int, band: tuple[float, float, float, float]) -> bool:
+    yf0, yf1, xf0, xf1 = band
+    return yf0 <= m.phys_y / h <= yf1 and xf0 <= m.phys_x / w <= xf1
+
+
+def _find_empty_pluses(gray: np.ndarray, color: np.ndarray) -> list[SlotTrack]:
+    """All green + empty slots on the highway (any row)."""
     thr = cfg_threshold("trucks_slot_plus")
     h, w = gray.shape[:2]
-    matches = find_all_templates(gray, "trucks_slot_plus.png", thr)
-    in_band = [
-        m
-        for m in matches
-        if 0.12 <= m.phys_y / h <= 0.72 and 0.28 <= m.phys_x / w <= 0.72
-    ]
-    if not in_band:
-        # HSV fallback for green +
-        y0, y1 = int(0.12 * h), int(0.72 * h)
-        x0, x1 = int(0.28 * w), int(0.72 * w)
-        roi = color[y0:y1, x0:x1]
-        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        green = cv2.inRange(hsv, (40, 100, 100), (90, 255, 255))
-        green = cv2.morphologyEx(green, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-        n, _, stats, cents = cv2.connectedComponentsWithStats(green, 8)
-        blobs: list[Match] = []
-        for i in range(1, n):
-            a = int(stats[i, cv2.CC_STAT_AREA])
-            bw = int(stats[i, cv2.CC_STAT_WIDTH])
-            bh = int(stats[i, cv2.CC_STAT_HEIGHT])
-            if not (120 <= a <= 10000 and 15 <= bw <= 120 and 15 <= bh <= 120):
-                continue
-            cx = float(cents[i][0] + x0)
-            cy = float(cents[i][1] + y0)
-            blobs.append(Match(phys_x=cx, phys_y=cy, confidence=0.80))
-        in_band = blobs
-    if not in_band:
+    band = _highway_band()
+    yf0, yf1, xf0, xf1 = band
+    out: list[SlotTrack] = []
+    for m in find_all_templates(gray, "trucks_slot_plus.png", thr):
+        if _in_highway(m, h, w, band):
+            out.append(
+                SlotTrack("empty", m.phys_x, m.phys_y, m.confidence, "plus")
+            )
+    if out:
+        return out
+
+    # HSV fallback for green + across the full highway
+    y0, y1 = int(yf0 * h), int(yf1 * h)
+    x0, x1 = int(xf0 * w), int(xf1 * w)
+    roi = color[y0:y1, x0:x1]
+    if roi.size == 0:
+        return []
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    green = cv2.inRange(hsv, (40, 100, 100), (90, 255, 255))
+    green = cv2.morphologyEx(green, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    n, _, stats, cents = cv2.connectedComponentsWithStats(green, 8)
+    for i in range(1, n):
+        a = int(stats[i, cv2.CC_STAT_AREA])
+        bw = int(stats[i, cv2.CC_STAT_WIDTH])
+        bh = int(stats[i, cv2.CC_STAT_HEIGHT])
+        if not (120 <= a <= 10000 and 15 <= bw <= 120 and 15 <= bh <= 120):
+            continue
+        cx = float(cents[i][0] + x0)
+        cy = float(cents[i][1] + y0)
+        out.append(SlotTrack("empty", cx, cy, 0.80, "plus_hsv"))
+    return out
+
+
+def _find_occupied_tracks(gray: np.ndarray, color: np.ndarray) -> list[SlotTrack]:
+    """
+    Occupied tracks: arrived claim chests + en-route truck-colored blobs.
+
+    Needed so the upper row is still recognized when it has no +.
+    """
+    h, w = gray.shape[:2]
+    band = _highway_band()
+    yf0, yf1, xf0, xf1 = band
+    out: list[SlotTrack] = []
+
+    chest_thr = cfg_threshold("trucks_claim_chest")
+    for m in find_all_templates(gray, "trucks_claim_chest.png", max(0.55, chest_thr - 0.10)):
+        if _in_highway(m, h, w, band):
+            out.append(
+                SlotTrack("occupied", m.phys_x, m.phys_y, m.confidence, "chest")
+            )
+
+    # En-route trucks: saturated non-green blobs in the highway column
+    y0, y1 = int(yf0 * h), int(yf1 * h)
+    x0, x1 = int(xf0 * w), int(xf1 * w)
+    roi = color[y0:y1, x0:x1]
+    if roi.size == 0:
+        return out
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    # Truck paint (orange / purple / cyan-ish / warm) — exclude pure green +
+    warm = cv2.inRange(hsv, (0, 60, 70), (35, 255, 255))
+    purple = cv2.inRange(hsv, (115, 50, 50), (170, 255, 255))
+    paint = cv2.bitwise_or(warm, purple)
+    green_plus = cv2.inRange(hsv, (40, 100, 100), (90, 255, 255))
+    paint = cv2.bitwise_and(paint, cv2.bitwise_not(green_plus))
+    paint = cv2.morphologyEx(paint, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+    paint = cv2.morphologyEx(paint, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+    n, _, stats, cents = cv2.connectedComponentsWithStats(paint, 8)
+    for i in range(1, n):
+        a = int(stats[i, cv2.CC_STAT_AREA])
+        bw = int(stats[i, cv2.CC_STAT_WIDTH])
+        bh = int(stats[i, cv2.CC_STAT_HEIGHT])
+        # Truck-sized, not tiny UI chrome / not huge panels
+        if not (800 <= a <= 80000 and 25 <= bw <= 280 and 20 <= bh <= 200):
+            continue
+        cx = float(cents[i][0] + x0)
+        cy = float(cents[i][1] + y0)
+        out.append(SlotTrack("occupied", cx, cy, 0.75, "truck_blob"))
+    return out
+
+
+def _cluster_tracks(marks: list[SlotTrack], h: int) -> list[SlotTrack]:
+    """Merge nearby Y markers into one track; empty wins over occupied if both."""
+    if not marks:
+        return []
+    ordered = sorted(marks, key=lambda s: s.phys_y)
+    clusters: list[list[SlotTrack]] = [[ordered[0]]]
+    for m in ordered[1:]:
+        prev = clusters[-1][0]
+        if abs(m.phys_y - prev.phys_y) / h <= _SLOT_Y_MERGE:
+            clusters[-1].append(m)
+        else:
+            clusters.append([m])
+
+    tracks: list[SlotTrack] = []
+    for group in clusters:
+        empties = [g for g in group if g.kind == "empty"]
+        if empties:
+            best = max(empties, key=lambda g: g.confidence)
+            tracks.append(best)
+        else:
+            best = max(group, key=lambda g: g.confidence)
+            tracks.append(best)
+    return tracks
+
+
+def _discover_all_tracks(gray: np.ndarray, color: np.ndarray) -> list[SlotTrack]:
+    """
+    Recognize every highway track/slot on screen (empty + occupied), top→bottom.
+
+    Strategy: see ALL rows, then callers use only the uppermost.
+    """
+    h = gray.shape[0]
+    marks = _find_empty_pluses(gray, color) + _find_occupied_tracks(gray, color)
+    tracks = _cluster_tracks(marks, h)
+    if not tracks:
+        log("[Trucks] track discovery: none found on highway")
+        return []
+    detail = ", ".join(
+        f"#{i + 1}:{t.kind}/{t.source}@yf={t.phys_y / h:.3f}"
+        for i, t in enumerate(tracks)
+    )
+    log(f"[Trucks] track discovery: {len(tracks)} track(s) → {detail}")
+    return tracks
+
+
+def _upper_plus(gray: np.ndarray, color: np.ndarray) -> Match | None:
+    """
+    One-truck rule: discover all tracks, then use ONLY the uppermost.
+
+    - Uppermost empty → return that +
+    - Uppermost occupied (en route / chest) → skip (do not click lower +)
+    """
+    tracks = _discover_all_tracks(gray, color)
+    if not tracks:
         return None
-    in_band.sort(key=lambda m: m.phys_y)
-    return in_band[0]
+
+    upper = tracks[0]
+    h = gray.shape[0]
+    if upper.kind != "empty":
+        lower_empty = sum(1 for t in tracks[1:] if t.kind == "empty")
+        log(
+            f"[Trucks] upper track OCCUPIED "
+            f"({upper.source} yf={upper.phys_y / h:.3f}) — "
+            f"leave it (ignoring {lower_empty} lower empty +)"
+        )
+        return None
+
+    if len(tracks) > 1:
+        log(
+            f"[Trucks] using UPPER track only "
+            f"(yf={upper.phys_y / h:.3f}); "
+            f"{len(tracks) - 1} lower track(s) ignored"
+        )
+    else:
+        log(f"[Trucks] upper track empty + yf={upper.phys_y / h:.3f}")
+
+    return Match(phys_x=upper.phys_x, phys_y=upper.phys_y, confidence=upper.confidence)
+
+
+def _is_wanted_color(kind: TruckColor, allow_purple: bool) -> bool:
+    return kind == "orange" or (allow_purple and kind == "purple")
+
+
+def _picker_roi_box(h: int, w: int) -> tuple[int, int, int, int]:
+    """Pixel box (y0,y1,x0,x1) used for picker color classification."""
+    return (
+        int(0.10 * h),
+        int(0.36 * h),
+        int(0.32 * w),
+        int(0.68 * w),
+    )
+
+
+def _sample_picker_color(color: np.ndarray) -> ColorSample:
+    """
+    Classify truck art on the picker modal as orange / purple / other.
+
+    Conservative on purpose: gray/green trucks with a few gold accents must
+    NOT count as orange. Green body pixels veto an orange call.
+    """
+    h, w = color.shape[:2]
+    y0, y1, x0, x1 = _picker_roi_box(h, w)
+    roi = color[y0:y1, x0:x1]
+    if roi.size == 0:
+        return ColorSample("unknown", 0, 0, 0)
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    # Slightly tighter orange (skip pale sand / weak yellow accents)
+    orange = cv2.inRange(hsv, (6, 110, 120), (26, 255, 255))
+    purple = cv2.inRange(hsv, (120, 70, 70), (170, 255, 255))
+    green = cv2.inRange(hsv, (40, 70, 70), (95, 255, 255))
+    o_px = int(cv2.countNonZero(orange))
+    p_px = int(cv2.countNonZero(purple))
+    g_px = int(cv2.countNonZero(green))
+
+    # Green body dominates → gray-green / green truck, never "orange"
+    if g_px >= 1500 and g_px >= o_px * 0.75:
+        return ColorSample("other", o_px, p_px, g_px)
+
+    min_px = 2500  # was 800 — gold stars alone used to false-trigger
+    if o_px < min_px and p_px < min_px:
+        return ColorSample("other", o_px, p_px, g_px)
+    if o_px >= min_px and o_px >= p_px * 1.3 and o_px >= max(g_px * 2.0, 1):
+        return ColorSample("orange", o_px, p_px, g_px)
+    if p_px >= min_px and p_px > o_px and p_px >= g_px:
+        return ColorSample("purple", o_px, p_px, g_px)
+    return ColorSample("other", o_px, p_px, g_px)
 
 
 def _detect_picker_color(color: np.ndarray) -> TruckColor:
-    """Classify truck art on the picker modal as orange / purple / other."""
-    h, w = color.shape[:2]
-    roi = color[int(0.08 * h) : int(0.38 * h), int(0.28 * w) : int(0.72 * w)]
-    if roi.size == 0:
-        return "unknown"
-    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    orange = cv2.inRange(hsv, (5, 80, 100), (28, 255, 255))
-    purple = cv2.inRange(hsv, (120, 60, 60), (170, 255, 255))
-    o_px = int(cv2.countNonZero(orange))
-    p_px = int(cv2.countNonZero(purple))
-    print(f"[Trucks] picker color pixels orange={o_px} purple={p_px}")
-    if o_px < 800 and p_px < 800:
-        return "other"
-    if o_px >= p_px * 1.15 and o_px >= 800:
-        return "orange"
-    if p_px > o_px and p_px >= 800:
-        return "purple"
-    return "other"
+    """Back-compat wrapper — prefer `_sample_picker_color` + `_log_color_round`."""
+    return _sample_picker_color(color).kind
+
+
+def _save_color_verify(
+    color: np.ndarray,
+    sample: ColorSample,
+    *,
+    round_i: int,
+    phase: str,
+) -> str | None:
+    """
+    Save ROI crop + HSV mask strip so a human can VERIFY the label.
+
+    Returns relative path string for runs.log, or None if disabled/failed.
+    """
+    if not trucks_cfg().get("save_color_debug", True):
+        return None
+    try:
+        import datetime
+
+        h, w = color.shape[:2]
+        y0, y1, x0, x1 = _picker_roi_box(h, w)
+        roi = color[y0:y1, x0:x1].copy()
+        if roi.size == 0:
+            return None
+
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        o_m = cv2.inRange(hsv, (6, 110, 120), (26, 255, 255))
+        p_m = cv2.inRange(hsv, (120, 70, 70), (170, 255, 255))
+        g_m = cv2.inRange(hsv, (40, 70, 70), (95, 255, 255))
+        # Stack: ROI | orange-mask | purple-mask | green-mask
+        o_bgr = cv2.cvtColor(o_m, cv2.COLOR_GRAY2BGR)
+        p_bgr = cv2.cvtColor(p_m, cv2.COLOR_GRAY2BGR)
+        g_bgr = cv2.cvtColor(g_m, cv2.COLOR_GRAY2BGR)
+        # Tint masks for readability
+        o_bgr[:, :, 0] = 0
+        o_bgr[:, :, 1] = np.minimum(o_bgr[:, :, 1] + 40, 255)
+        p_bgr[:, :, 1] = 0
+        g_bgr[:, :, 2] = 0
+        strip = np.hstack([roi, o_bgr, p_bgr, g_bgr])
+        label = (
+            f"{sample.kind}  o={sample.orange_px} p={sample.purple_px} "
+            f"g={sample.green_px}  [{phase} r{round_i}]"
+        )
+        cv2.putText(
+            strip,
+            label,
+            (8, 24),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+        # Annotated full frame (scaled) — confirms ROI is on the truck art
+        ann = color.copy()
+        cv2.rectangle(ann, (x0, y0), (x1, y1), (0, 255, 255), 3)
+        cv2.putText(
+            ann,
+            f"class={sample.kind}",
+            (x0, max(30, y0 - 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            (0, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        ann_small = cv2.resize(ann, (ann.shape[1] // 2, ann.shape[0] // 2))
+
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        out_dir = debug_dir("trucks", "color")
+        base = f"{stamp}_r{round_i}_{phase}_{sample.kind}"
+        crop_path = out_dir / f"{base}_verify.png"
+        full_path = out_dir / f"{base}_frame.png"
+        cv2.imwrite(str(crop_path), strip)
+        cv2.imwrite(str(full_path), ann_small)
+        return f"logs/debug/trucks/color/{crop_path.name}"
+    except Exception as exc:
+        log(f"[Trucks] color verify save failed: {exc}")
+        return None
+
+
+def _log_color_round(
+    sample: ColorSample,
+    color: np.ndarray,
+    *,
+    round_i: int,
+    max_refreshes: int,
+    phase: str,
+    allow_purple: bool,
+    tips: str = "none",
+) -> str:
+    """
+    One runs.log line per color check + verify crop on disk.
+
+    Returns decision: accept | refresh | abort_exhausted
+    """
+    wanted = _is_wanted_color(sample.kind, allow_purple)
+    if wanted:
+        decision = "accept"
+    elif phase.startswith("exhausted"):
+        decision = "abort_exhausted"
+    else:
+        decision = "refresh"
+    verify_path = _save_color_verify(color, sample, round_i=round_i, phase=phase)
+    path_bit = f" verify={verify_path}" if verify_path else ""
+    log(
+        f"[Trucks] color round={round_i}/{max_refreshes} phase={phase} "
+        f"result={sample.kind} orange_px={sample.orange_px} "
+        f"purple_px={sample.purple_px} green_px={sample.green_px} "
+        f"tips={tips} decision={decision}{path_bit}"
+    )
+    return decision
 
 
 def _find_go(gray: np.ndarray) -> Match | None:
-    thr = cfg_threshold("trucks_go")
+    """
+    Real Go is high-confidence near the bottom center.
+
+    Overnight failures used conf~0.837 at a shifted XY — reject weak matches.
+    """
+    thr = max(cfg_threshold("trucks_go"), 0.92)
     h, w = gray.shape[:2]
     m = find_template(gray, "trucks_go.png", thr)
-    if m is not None and m.phys_y / h >= 0.65:
+    if m is not None and m.phys_y / h >= 0.78 and 0.35 <= m.phys_x / w <= 0.65:
         return m
-    # Wide orange rect fallback
+    if m is not None:
+        log(
+            f"[Trucks] Go template rejected "
+            f"(conf={m.confidence:.3f} yf={m.phys_y / h:.3f} xf={m.phys_x / w:.3f}; "
+            f"need conf>={thr:.2f} yf>=0.78)"
+        )
+    # Wide orange rect fallback — still require bottom band
     color, _ = capture_both()
-    y0, y1 = int(0.68 * h), int(0.90 * h)
-    x0, x1 = int(0.30 * w), int(0.70 * w)
+    y0, y1 = int(0.78 * h), int(0.92 * h)
+    x0, x1 = int(0.35 * w), int(0.65 * w)
     roi = color[y0:y1, x0:x1]
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     orange = cv2.inRange(hsv, (5, 100, 120), (25, 255, 255))
@@ -381,62 +703,121 @@ def _handle_tips_modal(allow_purple: bool) -> str:
         return "none"  # that was Go, not Tips Confirm
 
     if allow_purple:
-        print("[Trucks] Tips modal — Confirm (allow_purple_trucks)")
+        log("[Trucks] Tips modal — Confirm (allow_purple_trucks)")
         _click_match(confirm, "trucks_tips_confirm", "tips_confirm")
         time.sleep(1.5)
         return "accepted"
 
-    print("[Trucks] Tips modal — dismiss (want orange, not purple)")
+    log("[Trucks] Tips modal — dismiss (want orange, not purple)")
     dismiss_overlay(delay=1.2)
     return "dismissed"
 
 
 def _refresh_until_wanted(allow_purple: bool, max_refreshes: int) -> TruckColor:
+    """
+    Refresh until orange (or purple if allowed). Logs color every round.
+
+    Returns the last classified color — caller MUST refuse Go unless wanted.
+    """
     color, _ = capture_both()
-    kind = _detect_picker_color(color)
-    if kind == "orange" or (allow_purple and kind == "purple"):
-        return kind
+    sample = _sample_picker_color(color)
+    _log_color_round(
+        sample,
+        color,
+        round_i=0,
+        max_refreshes=max_refreshes,
+        phase="initial",
+        allow_purple=allow_purple,
+    )
+    if _is_wanted_color(sample.kind, allow_purple):
+        return sample.kind
 
     for i in range(max_refreshes):
-        print(f"[Trucks] Refresh {i + 1}/{max_refreshes} (have {kind}, want orange)")
+        round_i = i + 1
         if not _click_refresh():
-            print("[Trucks] Refresh button not found — stopping refresh loop")
+            log(
+                f"[Trucks] color round={round_i}/{max_refreshes} "
+                f"phase=refresh_click_failed decision=stop_no_refresh_btn "
+                f"(last_result={sample.kind})"
+            )
             break
         tips = _handle_tips_modal(allow_purple)
         color, _ = capture_both()
-        kind = _detect_picker_color(color)
+        sample = _sample_picker_color(color)
+        _log_color_round(
+            sample,
+            color,
+            round_i=round_i,
+            max_refreshes=max_refreshes,
+            phase=f"after_refresh_{round_i}",
+            allow_purple=allow_purple,
+            tips=tips,
+        )
         if tips == "accepted" and allow_purple:
-            return "purple" if kind == "unknown" else kind
-        if kind == "orange":
-            return "orange"
-        if allow_purple and kind == "purple":
-            return "purple"
+            return "purple" if sample.kind == "unknown" else sample.kind
+        if _is_wanted_color(sample.kind, allow_purple):
+            return sample.kind
 
-    # Out of refreshes / tickets — send whatever is shown (better low than nothing)
+    # Out of refreshes / tickets — DO NOT send junk (caller aborts)
     color, _ = capture_both()
-    return _detect_picker_color(color)
+    sample = _sample_picker_color(color)
+    _log_color_round(
+        sample,
+        color,
+        round_i=max_refreshes,
+        max_refreshes=max_refreshes,
+        phase="exhausted",
+        allow_purple=allow_purple,
+    )
+    return sample.kind
 
 
 def _send_upper_truck(allow_purple: bool, max_refreshes: int) -> str:
+    """Send at most one truck, and only from the upper slot."""
     color, gray = capture_both()
     plus = _upper_plus(gray, color)
     if plus is None:
-        return "skipped: upper slot busy (en route or occupied)"
+        log_skip("trucks_upper_busy", detail="one truck at a time — lower slots ignored")
+        return "skipped: upper slot busy (one truck at a time)"
 
     _click_match(plus, "trucks_slot_plus_upper", "trucks_slot_plus.png")
     time.sleep(2.0)
 
     kind = _refresh_until_wanted(allow_purple, max_refreshes)
-    print(f"[Trucks] Sending truck color={kind}")
+    if not _is_wanted_color(kind, allow_purple):
+        log(f"[Trucks] REFUSING Go — color={kind} (want orange only)")
+        _exit_trucks()
+        return f"aborted: color={kind} (not orange)"
 
-    _, gray2 = capture_both()
+    # Re-check color right before Go (UI can change; never trust a stale label)
+    color_final, gray2 = capture_both()
+    sample_final = _sample_picker_color(color_final)
+    _log_color_round(
+        sample_final,
+        color_final,
+        round_i=-1,
+        max_refreshes=max_refreshes,
+        phase="pre_go_recheck",
+        allow_purple=allow_purple,
+    )
+    if not _is_wanted_color(sample_final.kind, allow_purple):
+        log(f"[Trucks] REFUSING Go — pre-click recheck color={sample_final.kind}")
+        _exit_trucks()
+        return f"aborted: recheck color={sample_final.kind} (not orange)"
+
+    log(f"[Trucks] Sending truck color={sample_final.kind}")
     go = _find_go(gray2)
     if go is None:
         _exit_trucks()
         return "failed: Go button not found"
+    # Hard floor — never accept the ~0.837 false Go that logged fake sends
+    if go.confidence < 0.92:
+        log(f"[Trucks] REFUSING Go — weak conf={go.confidence:.3f} (need >=0.92)")
+        _exit_trucks()
+        return f"aborted: weak Go conf={go.confidence:.3f}"
     _click_match(go, "trucks_go", "trucks_go.png")
     time.sleep(2.2)
-    return f"sent:{kind}"
+    return f"sent:{sample_final.kind}"
 
 
 def run_trucks_flow() -> str:
