@@ -4,6 +4,8 @@ OpenCV template matching with full-dynamic scale and game-window ROI.
 Scale is discovered every run from on-screen anchors (no per-machine calibration).
 Matching is restricted to the game window region so desktop chrome cannot win.
 """
+import json
+import threading
 import time
 from pathlib import Path
 from typing import NamedTuple
@@ -11,7 +13,7 @@ from typing import NamedTuple
 import cv2
 import numpy as np
 
-from lastz.config import templates_dir
+from lastz.config import logs_dir, templates_dir
 
 REF_PIXEL_RATIO = 3024 / 1512  # templates captured on built-in Retina laptop
 
@@ -19,8 +21,20 @@ _SCALE_LO = 0.35
 _SCALE_HI = 1.25
 _SCALE_STEP = 0.025
 _ACCEPT_CONF = 0.70
+# A single-anchor match at/above this confidence is trusted outright, no
+# sanity-check against history needed — this is what real UI anchors score
+# (historically ~0.94-0.97 on a clean wilderness/base screen).
+_STRONG_CONF = 0.90
 _LOCAL_DELTA = 0.20
 _LOCAL_STEP = 0.025
+# How close a *weak* (0.70-0.90 conf) reading must be to the last known-good
+# scale to be trusted; otherwise it's likely a false peak on an occluded/
+# modal screen and we fall back to last-good instead.
+_WEAK_AGREE_DELTA = 0.05
+# Cached scale is re-probed (single scale, all anchors) before being trusted
+# on a live frame; below this confidence the cache is treated as poisoned.
+_CACHE_REVALIDATE_CONF = 0.55
+_LAST_GOOD_TTL_SEC = 7 * 24 * 60 * 60
 
 # Multi-anchor set for always-on scale discovery
 _CALIBRATION_ANCHORS = (
@@ -45,8 +59,164 @@ class MatchWithBBox(NamedTuple):
     confidence: float
 
 
+# Thread-local — the heli-BR-monitor background thread (watcher.py starts it
+# via helicopter.start_heli_monitor(), see lastz/flows/helicopter.py) calls
+# ensure_template_scale()/find_template() on its own WINDOW-shaped captures
+# concurrently with the main flow thread's DISPLAY-shaped captures. These
+# used to be plain module globals shared by both threads: one thread's
+# calibration for its own capture shape would stomp the other's
+# _calibrated_for/_scale_center mid-flow (same bug class fixed for
+# lastz/screen.py's capture state — see that module's docstring). Concretely
+# this could make find_template()/find_all_templates() build their scale
+# search band around the WRONG resolution's scale center right after the
+# background thread calibrates in between _ensure_scale_calibrated() and
+# template_scales() in the main thread — a plausible cause of intermittent,
+# hard-to-reproduce match misses (e.g. HQ navigation failing only when run
+# inside the watcher, never standalone). _scale_center default of 1.0 below
+# is kept as the pre-calibration fallback for a thread that hasn't
+# calibrated yet, not as shared mutable state.
+_local = threading.local()
 _calibrated_for: tuple[int, int] | None = None
 _scale_center: float = 1.0
+
+
+def _get_scale_center() -> float:
+    return getattr(_local, "scale_center", _scale_center)
+
+# Disk cache so short-lived one-off scripts (debug/VERIFY steps) don't each pay
+# the ~25s anchor-scan cost. In-process runs (the real flow) never touch disk —
+# the in-memory _calibrated_for check above always wins within one process.
+#
+# TTL is long (24h, not just a few minutes) because the cache key already
+# includes the capture `shape` (resolution) — any real change that would
+# invalidate a cached scale (different window size, different display,
+# different capture resolution) changes that key and forces a fresh
+# calibration regardless of TTL. The TTL only guards against the rarer case
+# of the same-resolution capture rendering UI at a different scale (e.g. an
+# in-game zoom/DPI change with no resolution change) — a real but uncommon
+# risk, and a stale scale degrades matching rather than breaking it outright
+# (thresholds/soft-retries elsewhere still catch bad matches). 24h trades a
+# small amount of that risk for eliminating the ~25s recalibration cost on
+# every poll of a long-running monitor loop.
+_SCALE_CACHE_TTL_SEC = 24 * 60 * 60
+
+
+def _scale_cache_path() -> Path:
+    return logs_dir() / ".template_scale_cache.json"
+
+
+def _shape_key(shape: tuple[int, int]) -> str:
+    return f"{int(shape[0])}x{int(shape[1])}"
+
+
+def _load_cached_scale(shape: tuple[int, int]) -> float | None:
+    """
+    Multi-entry cache keyed by capture shape.
+
+    Not a single-slot cache: the passive BR detector captures the game
+    WINDOW (one resolution) while the interactive flow captures the full
+    DISPLAY (a different resolution) — a single-slot cache meant every
+    switch between the two overwrote the other's entry, guaranteeing a
+    ~25s recalibration on every flow start. Each shape now gets its own
+    slot so both stay warm independently.
+    """
+    try:
+        path = _scale_cache_path()
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text())
+        entries = data.get("entries") if isinstance(data, dict) else None
+        if entries is None:
+            return None
+        entry = entries.get(_shape_key(shape))
+        if entry is None:
+            return None
+        if time.time() - float(entry.get("ts", 0)) > _SCALE_CACHE_TTL_SEC:
+            return None
+        return float(entry["scale"])
+    except Exception:
+        return None
+
+
+def _save_cached_scale(shape: tuple[int, int], scale: float) -> None:
+    try:
+        path = _scale_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data: dict = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text())
+                if isinstance(loaded, dict) and isinstance(loaded.get("entries"), dict):
+                    data = loaded
+            except Exception:
+                data = {}
+        entries = data.setdefault("entries", {})
+        entries[_shape_key(shape)] = {"scale": scale, "ts": time.time()}
+        path.write_text(json.dumps(data))
+    except Exception:
+        pass
+
+
+def _load_last_good_scale() -> float | None:
+    """
+    Most recent scale that was confirmed by a STRONG single-anchor match
+    (conf >= _STRONG_CONF). Used as the sanity anchor for weak/ambiguous
+    calibrations instead of the pixel-ratio `expected` estimate, which has
+    been observed to be off by a large margin on some displays (the exact
+    failure mode that let a false 0.375 peak get accepted as "close enough"
+    to a wrong expected value, then cached for 24h — see incident 2026-07-30).
+    """
+    try:
+        path = _scale_cache_path()
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text())
+        entry = data.get("last_good") if isinstance(data, dict) else None
+        if not entry:
+            return None
+        if time.time() - float(entry.get("ts", 0)) > _LAST_GOOD_TTL_SEC:
+            return None
+        return float(entry["scale"])
+    except Exception:
+        return None
+
+
+def _save_last_good_scale(scale: float, conf: float) -> None:
+    try:
+        path = _scale_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data: dict = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text())
+                if isinstance(loaded, dict):
+                    data = loaded
+            except Exception:
+                data = {}
+        data["last_good"] = {"scale": scale, "conf": conf, "ts": time.time()}
+        path.write_text(json.dumps(data))
+    except Exception:
+        pass
+
+
+def _revalidate_cached_scale(roi: np.ndarray, scale: float) -> bool:
+    """
+    Cheap single-scale re-probe of the calibration anchors against the
+    *current* frame before trusting a disk-cached scale. A poisoned cache
+    entry (wrong scale) will not match any real anchor at that scale, so
+    this catches stale/bad cache without paying the full ~20s recalibration
+    cost on every run — only on a cache miss/mismatch.
+    """
+    for tpl_name in _CALIBRATION_ANCHORS:
+        tpl_path = templates_dir() / tpl_name
+        if not tpl_path.exists():
+            continue
+        tpl = cv2.imread(str(tpl_path), cv2.IMREAD_GRAYSCALE)
+        if tpl is None:
+            continue
+        if _probe_scale(roi, tpl, scale) >= _CACHE_REVALIDATE_CONF:
+            return True
+    return False
 
 
 def _scaled_template(tpl: np.ndarray, scale: float) -> tuple[np.ndarray, int, int]:
@@ -127,16 +297,28 @@ def game_window_roi(screen: np.ndarray) -> tuple[np.ndarray, int, int]:
 
 
 def _ensure_scale_calibrated(screen: np.ndarray) -> None:
-    global _calibrated_for, _scale_center
-
     shape = (screen.shape[1], screen.shape[0])
-    if _calibrated_for == shape:
+    if getattr(_local, "calibrated_for", None) == shape:
         return
 
-    t0 = time.perf_counter()
     roi, _, _ = game_window_roi(screen)
+
+    cached = _load_cached_scale(shape)
+    if cached is not None:
+        if _revalidate_cached_scale(roi, cached):
+            _local.scale_center = cached
+            _local.calibrated_for = shape
+            print(f"[vision] Template scale from disk cache: {cached:.3f}")
+            return
+        print(
+            f"[vision] Disk-cached scale {cached:.3f} failed re-validation on "
+            f"live frame (no anchor >= {_CACHE_REVALIDATE_CONF}) — recalibrating."
+        )
+
+    t0 = time.perf_counter()
     expected = _clamp_scale(_expected_scale_for_screen(screen))
-    best_scale = expected
+    last_good = _load_last_good_scale()
+    best_scale = last_good if last_good is not None else expected
     best_conf = 0.0
     best_anchor = ""
 
@@ -155,37 +337,59 @@ def _ensure_scale_calibrated(screen: np.ndarray) -> None:
                 best_anchor = tpl_name
 
     ms = (time.perf_counter() - t0) * 1000.0
-    if best_conf >= _ACCEPT_CONF:
-        # Modals hide HUD anchors and can invent a bogus scale peak (e.g. 0.40).
-        # Prefer the pixel-ratio expectation unless the anchor is clearly strong.
-        if abs(best_scale - expected) > 0.15 and best_conf < 0.92:
-            _scale_center = expected
+    fallback = last_good if last_good is not None else expected
+    fallback_label = "last-good" if last_good is not None else "expected"
+
+    if best_conf >= _STRONG_CONF:
+        # Strong single-anchor lock — trust it outright and remember it as
+        # the new sanity anchor for future weak/ambiguous calibrations.
+        new_scale = _clamp_scale(best_scale)
+        print(
+            f"[vision] Auto template scale: {new_scale:.3f} "
+            f"(anchor={best_anchor} conf={best_conf:.4f}) ms={ms:.0f}"
+        )
+        _save_last_good_scale(new_scale, best_conf)
+        _save_cached_scale(shape, new_scale)
+    elif best_conf >= _ACCEPT_CONF:
+        # Weak lock (e.g. a modal/popup partially hiding HUD anchors can
+        # invent a bogus peak). Only trust it if it agrees with the last
+        # confirmed-good scale; otherwise a wrong peak here would silently
+        # get cached for hours (the 2026-07-30 0.375 incident). The old
+        # pixel-ratio "expected" check was not reliable enough on its own —
+        # it was itself off from the true scale on this display, which is
+        # exactly how the bad peak slipped through last time.
+        if last_good is not None and abs(best_scale - last_good) <= _WEAK_AGREE_DELTA:
+            new_scale = _clamp_scale(best_scale)
             print(
-                f"[vision] Auto template scale: {_scale_center:.3f} "
-                f"(expected; rejected dubious {best_scale:.3f} "
+                f"[vision] Auto template scale: {new_scale:.3f} "
+                f"(weak anchor={best_anchor} conf={best_conf:.4f}, "
+                f"confirmed by last-good) ms={ms:.0f}"
+            )
+            _save_cached_scale(shape, new_scale)
+        else:
+            new_scale = _clamp_scale(fallback)
+            print(
+                f"[vision] Auto template scale: {new_scale:.3f} "
+                f"({fallback_label}; rejected dubious {best_scale:.3f} "
                 f"anchor={best_anchor} conf={best_conf:.4f}) ms={ms:.0f}"
             )
-        else:
-            _scale_center = _clamp_scale(best_scale)
-            print(
-                f"[vision] Auto template scale: {_scale_center:.3f} "
-                f"(anchor={best_anchor} conf={best_conf:.4f}) ms={ms:.0f}"
-            )
+            # Do not persist a rejected/dubious reading.
     else:
-        _scale_center = expected
+        new_scale = _clamp_scale(fallback)
         print(
             f"[vision] WARN: weak anchors (best conf={best_conf:.4f}). "
-            f"Using pixel-ratio scale {_scale_center:.3f}. "
+            f"Using {fallback_label} scale {new_scale:.3f}. "
             f"Keep game on wilderness/base map, fully visible on one display. "
             f"ms={ms:.0f}"
         )
 
-    _calibrated_for = shape
+    _local.scale_center = new_scale
+    _local.calibrated_for = shape
 
 
 def current_template_scale() -> float:
     """Return the last calibrated template scale center (1.0 if not yet calibrated)."""
-    return float(_scale_center)
+    return float(_get_scale_center())
 
 
 def ensure_template_scale(screen: np.ndarray) -> None:
@@ -194,10 +398,14 @@ def ensure_template_scale(screen: np.ndarray) -> None:
 
 
 def template_scales() -> list[float]:
+    # Read once so this thread's search band is built from a single,
+    # consistent scale — not two reads straddling another thread's
+    # concurrent calibration (see _local's docstring above).
+    center = _get_scale_center()
     # Always include 1.0 so a stuck bad center still finds Retina templates.
-    scales = set(_local_scale_band(_scale_center))
+    scales = set(_local_scale_band(center))
     scales.add(1.0)
-    scales.add(round(_scale_center, 3))
+    scales.add(round(center, 3))
     return sorted(scales)
 
 

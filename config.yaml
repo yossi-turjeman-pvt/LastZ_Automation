@@ -39,6 +39,13 @@ thresholds:
   help_button: 0.75
   quit_tips: 0.75              # Tips modal "Exit the game?" text
   quit_cancel: 0.75            # blue Cancel on Quit Tips (not the tiny X)
+  heli_br_icon: 0.70
+  heli_coords: 0.65
+  heli_march: 0.65
+  heli_zzz: 0.60
+  heli_search: 0.65
+  heli_prize: 0.60
+  heli_alliance_tab: 0.65
 
 alliance_techs:
   max_donates: 20              # stop blue Donate loop after this many clicks
@@ -53,6 +60,17 @@ trucks:
   # If upper is occupied, leave it — never click a lower empty +.
   highway_band: [0.10, 0.78, 0.28, 0.72]
   save_color_debug: true       # ROI+mask crops in logs/debug/trucks/color/ (VERIFY labels)
+  # An en-route (already-sent) truck can render with NO +/chest/color signal
+  # at all, so it silently vanishes from discovery instead of showing as
+  # "occupied" — every lower lane then shifts up and the topmost VISIBLE one
+  # gets mistaken for the true upper slot (caused a real double-send, see
+  # logs/runs.log 2026-08-01 ~05:44). expected_track_count is how many
+  # lanes exist when all are cleanly visible (used to safely learn the true
+  # row-1 position); top_row_tolerance is how far below that learned
+  # position a slot can still be trusted as "upper" before we refuse to
+  # send (fail-safe) instead of guessing.
+  expected_track_count: 4
+  top_row_tolerance: 0.05
 
 # Menu 4 — click Alliance Help handshake as soon as it blinks (BR 1/8 only).
 help_watcher:
@@ -76,6 +94,31 @@ drone_gift:
 
 watcher:
   alliance_interval_sec: 180   # seconds between claim runs in menu option 2
+
+# Motivation stats — itemized loot ledger (Alliance Gifts / Battlefield / Drone)
+stats:
+  enabled: true
+  path: data/motivation_stats.json
+
+# Helicopter (Explore Treasure) — priority over gifts in watcher (menu 2)
+helicopter:
+  enabled: false
+  poll_sec: 1.0                 # BR indication poll interval
+  br_band: [0.55, 0.95, 0.78, 1.0]
+  search_max_sec: 1200          # Explore icon click allowed when timer ≤ 00:20:00 — the shared explore
+                                 # progress (from all joined alliance members) can finish well before this
+                                 # formation's own march timer hits 5:00, so waiting that long is too late
+  prize_at_sec: 1               # start the sustained burst window when timer ≤ 00:00:01 (or prize sighted)
+  prize_clicks: 120             # clicks fired per burst repetition within the sustained window
+  prize_interval: 0.003
+  prize_burst_span_sec: 8.0     # keep re-firing bursts for this long once the window is entered — the
+                                 # actual claim window is confirmed too short to catch with one reactive
+                                 # shot, so this sprays continuously across the predicted moment instead
+  thank_you_text: "Thank You from LastZ-Automation"
+  # Click empty land relative to map center (next to heli)
+  empty_land_offset_frac: [-0.04, 0.06]
+  wait_search_timeout_sec: 7200
+  wait_prize_timeout_sec: 600
 
 coordinates:
   # Empty-map dismiss as fractions of the current game window (w, h)

@@ -15,6 +15,7 @@ import cv2
 from lastz.config import load_config, logs_dir, threshold as cfg_threshold
 from lastz.flows.base import dismiss_overlay, reset_ui
 from lastz.flows.hq_nav import is_hq_mode, navigate_to_hq, navigate_to_wilderness
+from lastz.flows.loot_parse import parse_congrats_grid
 from lastz.input import click, ensure_game_running, focus_game
 from lastz.ocr import format_duration, parse_duration, read_duration_from_region
 from lastz.runlog import log_click, log_skip
@@ -24,6 +25,7 @@ from lastz.screen import (
     physical_to_logical,
     scale_capture_rect_uniform,
 )
+from lastz.stats import record_claim, record_loot
 from lastz.vision import Match, find_template
 
 _MIN_DURATION_SEC = 8 * 3600
@@ -346,12 +348,20 @@ def run_drone_gift_flow(*, skip_reset: bool = False) -> str:
             phys_xy=(collect_match.phys_x, collect_match.phys_y),
         )
         click(colx, coly)
-        time.sleep(2.0)
+        time.sleep(1.25)
+        color_reward, _ = capture_both()
+        loot = parse_congrats_grid(color_reward)
+        if loot:
+            record_loot("drone", loot)
+        record_claim("drone_collect")
 
         dismiss_overlay(delay=1.5)
         dismiss_overlay(delay=1.5)
 
         print(f"-> Drone Gift collected! Duration was {duration_str}.")
+        if loot:
+            bits = ", ".join(f"{k}={v:g}" for k, v in sorted(loot.items()))
+            return f"Collected ({duration_str}); loot: {bits}"
         return f"Collected ({duration_str})"
 
     finally:

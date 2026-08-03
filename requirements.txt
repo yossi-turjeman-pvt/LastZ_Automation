@@ -4,3 +4,4 @@ numpy>=1.24
 Pillow>=10.0
 PyYAML>=6.0
 pytesseract>=0.3.10
+pyobjc-framework-Quartz>=10.0   # macOS-only: off-screen window capture for the background heli monitor

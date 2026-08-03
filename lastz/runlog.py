@@ -15,6 +15,7 @@ import platform
 import re
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -113,14 +114,26 @@ class _TimestampTee:
     def __init__(self, real: TextIO) -> None:
         self.real = real
         self._buf = ""
+        # The heli-BR-monitor background thread (see lastz/flows/helicopter.py
+        # start_heli_monitor()) keeps calling print() — routed through this
+        # same tee instance via sys.stdout — for its whole lifetime, while
+        # the main flow thread's stdout is also tee'd here during a run.
+        # Without a lock, interleaved write() calls could split/garble
+        # _buf between threads (one thread's partial line getting emitted
+        # mid-append by another), corrupting logs/runs.log — the primary
+        # tool used to investigate exactly the kind of incident this
+        # whole file exists to log. Cosmetic-only impact (never affects
+        # game actions), but log integrity matters a lot here.
+        self._lock = threading.Lock()
 
     def write(self, data: str) -> int:
         if not isinstance(data, str):
             data = str(data)
-        self._buf += data
-        while "\n" in self._buf:
-            line, self._buf = self._buf.split("\n", 1)
-            self._emit(line)
+        with self._lock:
+            self._buf += data
+            while "\n" in self._buf:
+                line, self._buf = self._buf.split("\n", 1)
+                self._emit(line)
         return len(data)
 
     def _emit(self, raw: str) -> None:
@@ -138,11 +151,12 @@ class _TimestampTee:
         _append_runs(stamped)
 
     def flush(self) -> None:
-        if self._buf:
-            # Incomplete line without newline — still stamp so we don't lose it at end.
-            partial = self._buf
-            self._buf = ""
-            self._emit(partial)
+        with self._lock:
+            if self._buf:
+                # Incomplete line without newline — still stamp so we don't lose it at end.
+                partial = self._buf
+                self._buf = ""
+                self._emit(partial)
         self.real.flush()
 
     def isatty(self) -> bool:
@@ -248,7 +262,7 @@ def log_gifts_modal_state(tag: str = "after_common_claim_all") -> str:
     """
     from lastz.config import threshold as cfg_threshold
     from lastz.debug_match import in_band
-    from lastz.flows.ui_bands import BAND_RARE_TAB
+    from lastz.flows.ui_bands import BAND_ALLIANCE_GRID, BAND_RARE_TAB
     from lastz.screen import capture_both
     from lastz.vision import find_any, find_template
 
@@ -267,10 +281,19 @@ def log_gifts_modal_state(tag: str = "after_common_claim_all") -> str:
     gifts_tile = find_template(
         gray, "alliance_gifts_precise.png", cfg_threshold("alliance_gifts")
     )
+    # The plain Alliance grid and the Gifts sub-panel can each put something
+    # in BAND_RARE_TAB's on-screen region (real incident 2026-08-02: a green
+    # checkmark icon in the Alliance description text false-matched
+    # rare_tab.png at conf=0.80, just above the 0.78 threshold, while the
+    # grid's own Gifts tile was still plainly visible). rare_ok alone can't
+    # tell those apart — the grid tile being visible is the deciding vote.
+    gifts_tile_in_grid = gifts_tile is not None and in_band(
+        gifts_tile.phys_x, gifts_tile.phys_y, h, w, *BAND_ALLIANCE_GRID
+    )
 
-    if rare_ok:
+    if rare_ok and not gifts_tile_in_grid:
         state = "gifts_modal_open"
-    elif gifts_tile is not None:
+    elif gifts_tile_in_grid:
         state = "alliance_grid_visible_gifts_likely_closed"
     elif claim_all is not None:
         state = "claim_all_still_visible"

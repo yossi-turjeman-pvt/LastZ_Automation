@@ -103,6 +103,15 @@ def trucks_cfg() -> dict:
         ],
         # Save ROI+mask crops under logs/debug/trucks/color/ for human VERIFY
         "save_color_debug": bool(cfg.get("save_color_debug", True)),
+        # Number of highway lanes when all are visible/empty (observed: 4).
+        # Used to only "learn" the true top-row Y-position from a scan we can
+        # be sure has no hidden occupied row above it.
+        "expected_track_count": max(1, int(cfg.get("expected_track_count", 4))),
+        # How far below the learned top-row Y-fraction a slot can still be
+        # trusted as "the upper slot". A track further down than this is
+        # treated as row 2+ (i.e. row 1 is probably an invisible in-transit
+        # truck) and the send is refused rather than guessed.
+        "top_row_tolerance": float(cfg.get("top_row_tolerance", 0.05)),
     }
 
 

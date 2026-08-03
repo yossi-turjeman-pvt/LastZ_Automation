@@ -48,8 +48,55 @@ _cg.CGEventCreateKeyboardEvent.argtypes = [_void_p, _uint32, ctypes.c_bool]
 _cg.CGEventCreateKeyboardEvent.restype = _void_p
 
 
+class GameNotFocusedError(RuntimeError):
+    """
+    Raised when the game is not actually the frontmost app right before
+    sending a click or keystroke.
+
+    This is not theoretical: a live flow's "thank you" chat message was
+    once typed directly into this IDE's own chat input and submitted as a
+    user message, because the agent was working in Cursor (reading files,
+    running diagnostics) while the flow's paste_text()/press_return() fired
+    — Cursor, not the game, had keyboard focus at that instant, and neither
+    function verified focus before sending. Every input-sending function
+    below now refuses to fire blindly.
+    """
+
+    pass
+
+
+def is_game_frontmost() -> bool:
+    """True if the game process is the actual frontmost (focused) app.
+
+    Stronger than is_game_running(): a running-but-backgrounded game still
+    silently receives no keystrokes at all — they go to whatever app is
+    actually focused instead (see GameNotFocusedError).
+    """
+    proc = game_process()
+    result = subprocess.run(
+        ["osascript", "-e",
+         'tell application "System Events" to return name of first process whose frontmost is true'],
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() == proc
+
+
+def _require_game_frontmost() -> None:
+    """Verify focus, re-focusing once if needed; raise rather than fire blindly."""
+    if is_game_frontmost():
+        return
+    focus_game()
+    if is_game_frontmost():
+        return
+    raise GameNotFocusedError(
+        f"Refusing to send input: '{game_process()}' is not the frontmost app."
+    )
+
+
 def click(x: float, y: float) -> None:
     """Post a left-click at logical coordinates (x, y)."""
+    _require_game_frontmost()
     move = _cg.CGEventCreateMouseEvent(None, _kCGEventMouseMoved, x, y, 0)
     _cg.CGEventPost(_kCGHIDEventTap, move)
     time.sleep(0.15)
@@ -61,8 +108,67 @@ def click(x: float, y: float) -> None:
     time.sleep(0.15)
 
 
+def rapid_click(
+    x: float,
+    y: float,
+    *,
+    count: int = 80,
+    interval: float = 0.003,
+) -> None:
+    """
+    Near-zero-delay left-click burst at logical (x, y).
+
+    Used for Helicopter prize window (≤10 claimants). Moves once, then
+    down/up with minimal sleeps — much faster than click().
+
+    Checks focus ONCE up front (not per-click, which would blow the
+    latency budget of an 80+ click burst) — callers doing a long wait
+    beforehand should have already reasserted focus close to the burst.
+    """
+    _require_game_frontmost()
+    move = _cg.CGEventCreateMouseEvent(None, _kCGEventMouseMoved, x, y, 0)
+    _cg.CGEventPost(_kCGHIDEventTap, move)
+    # Tiny settle so Wine/Unity sees the cursor
+    time.sleep(0.01)
+    n = max(1, int(count))
+    gap = max(0.0, float(interval))
+    for _ in range(n):
+        down = _cg.CGEventCreateMouseEvent(None, _kCGEventLeftMouseDown, x, y, 0)
+        _cg.CGEventPost(_kCGHIDEventTap, down)
+        up = _cg.CGEventCreateMouseEvent(None, _kCGEventLeftMouseUp, x, y, 0)
+        _cg.CGEventPost(_kCGHIDEventTap, up)
+        if gap:
+            time.sleep(gap)
+
+
+def paste_text(text: str) -> None:
+    """
+    Paste `text` via clipboard + Cmd+V (reliable for game chat under CrossOver).
+
+    Caller must focus the text field first.
+    """
+    _require_game_frontmost()
+    subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=False)
+    time.sleep(0.05)
+    subprocess.run(
+        [
+            "osascript",
+            "-e",
+            'tell application "System Events" to keystroke "v" using command down',
+        ],
+        capture_output=True,
+    )
+    time.sleep(0.15)
+
+
+def press_return() -> None:
+    """Press Return / Enter (virtual key 36)."""
+    press_key(36)
+
+
 def press_key(key_code: int) -> None:
     """Post a key down/up for a macOS virtual key code."""
+    _require_game_frontmost()
     down = _cg.CGEventCreateKeyboardEvent(None, _uint32(key_code), True)
     _cg.CGEventPost(_kCGHIDEventTap, down)
     time.sleep(0.05)
@@ -97,6 +203,7 @@ def drag(
         steps:      Number of intermediate move events (higher = smoother).
         step_delay: Seconds between each move event.
     """
+    _require_game_frontmost()
     # Mouse down at start position
     down = _cg.CGEventCreateMouseEvent(None, _kCGEventLeftMouseDown, x1, y1, 0)
     _cg.CGEventPost(_kCGHIDEventTap, down)
@@ -126,6 +233,7 @@ def scroll_wheel(x: float, y: float, delta_y: int, *, steps: int = 1, step_delay
     CrossOver/Wine needs the cursor actually at (x,y) AND the scroll event
     location set — posting scroll without location often does nothing.
     """
+    _require_game_frontmost()
     pt = _CGPoint(float(x), float(y))
     # Hard-warp cursor into the game map (MouseMoved alone is flaky under Wine)
     _cg.CGWarpMouseCursorPosition(pt)

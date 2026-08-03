@@ -8,13 +8,16 @@ red badge, or every `open_every_n_runs` gifts runs in this process
 """
 from __future__ import annotations
 
+import json
 import re
 import time
+from pathlib import Path
 from typing import Literal, NamedTuple
 
 import cv2
 import numpy as np
 
+from lastz.config import logs_dir
 from lastz.config import threshold as cfg_threshold
 from lastz.config import trucks_cfg
 from lastz.debug_match import debug_dir
@@ -22,6 +25,7 @@ from lastz.flows.base import dismiss_overlay, ensure_wilderness
 from lastz.input import click, press_escape
 from lastz.runlog import log, log_click, log_skip, log_step
 from lastz.screen import capture_both, physical_to_logical
+from lastz.stats import record_claim
 from lastz.vision import Match, find_all_templates, find_template
 
 try:
@@ -52,6 +56,10 @@ _SLOT_Y_MERGE = 0.10
 _BLOB_NEAR_PLUS_Y = 0.08
 # Highway scan — find ALL tracks here (not a "upper only" lock)
 _DEFAULT_HIGHWAY_BAND = [0.10, 0.78, 0.28, 0.72]
+# Conservative starting assumption for the true row-1 Y-fraction before this
+# process has ever seen a fully clean (all-lanes-visible) scan to calibrate
+# from. Real observed value on this account/layout is ~0.273.
+_DEFAULT_TOP_ROW_YF = 0.30
 
 
 def _click_match(m: Match, label: str, template: str) -> None:
@@ -412,6 +420,101 @@ def _cluster_tracks(marks: list[SlotTrack], h: int) -> list[SlotTrack]:
     return tracks
 
 
+def _trucks_state_path() -> Path:
+    return logs_dir() / ".trucks_state.json"
+
+
+def _shape_key(shape: tuple[int, int]) -> str:
+    """Mirror `lastz.vision._shape_key` — keyed by (h, w) of the capture."""
+    return f"{int(shape[0])}x{int(shape[1])}"
+
+
+def _load_top_row_yf(shape: tuple[int, int]) -> float:
+    """
+    Last confirmed true row-1 Y-fraction for this capture shape, learned
+    from a scan where all lanes were cleanly visible (see
+    `_maybe_learn_top_row_yf`). Falls back to a conservative default before
+    any calibration exists for this shape.
+
+    Keyed by capture (h, w) — not a single global scalar — because a
+    Y-fraction learned on one resolution/window size isn't guaranteed to
+    transfer to another (the same class of bug already hit once with the
+    unkeyed template-scale cache in `lastz/vision.py`, hardened there by
+    keying entries per capture shape).
+    """
+    try:
+        path = _trucks_state_path()
+        if not path.exists():
+            return _DEFAULT_TOP_ROW_YF
+        data = json.loads(path.read_text())
+        entries = data.get("entries") if isinstance(data, dict) else None
+        if not isinstance(entries, dict):
+            return _DEFAULT_TOP_ROW_YF
+        entry = entries.get(_shape_key(shape))
+        if not entry:
+            return _DEFAULT_TOP_ROW_YF
+        return float(entry["top_row_yf"])
+    except Exception:
+        return _DEFAULT_TOP_ROW_YF
+
+
+def _save_top_row_yf(shape: tuple[int, int], yf: float) -> None:
+    try:
+        path = _trucks_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data: dict = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text())
+                if isinstance(loaded, dict) and isinstance(loaded.get("entries"), dict):
+                    data = loaded
+            except Exception:
+                data = {}
+        entries = data.setdefault("entries", {})
+        entries[_shape_key(shape)] = {"top_row_yf": yf, "ts": time.time()}
+        # Atomic write (temp + rename) so a crash mid-write can't corrupt the
+        # file for the next read, matching the pattern used in stats.py.
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data))
+        tmp.replace(path)
+    except Exception:
+        pass
+
+
+def _maybe_learn_top_row_yf(tracks: list[SlotTrack], shape: tuple[int, int]) -> None:
+    """
+    Opportunistically calibrate the true row-1 Y-fraction for this capture shape.
+
+    Only trust a scan where ALL expected lanes are visible via clean
+    template matches (source "plus"/"chest", never the noisier HSV
+    fallbacks) — that's the one situation we can be sure there's no hidden
+    occupied row above what we're seeing. Track the smallest (highest-on-
+    screen) such Y-fraction ever confirmed, since that's the truest "row 1".
+
+    A sanity floor guards against a single spurious high-up match (e.g. a
+    stray template hit near the top of the scan band) poisoning the
+    baseline: nothing above the highway band's own top edge is trusted.
+    """
+    expected = trucks_cfg()["expected_track_count"]
+    if len(tracks) != expected:
+        return
+    if any(t.source not in ("plus", "chest") for t in tracks):
+        return
+    h = shape[0]
+    top_yf = min(t.phys_y for t in tracks) / h
+    band_yf0 = _highway_band()[0]
+    if top_yf < band_yf0 + 0.02:
+        log(
+            f"[Trucks] ignoring implausible top-row candidate yf={top_yf:.3f} "
+            f"(too close to scan band edge yf0={band_yf0:.2f})"
+        )
+        return
+    current = _load_top_row_yf(shape)
+    if top_yf < current - 0.005:
+        _save_top_row_yf(shape, top_yf)
+        log(f"[Trucks] learned top-row yf={top_yf:.3f} (was {current:.3f})")
+
+
 def _discover_all_tracks(gray: np.ndarray, color: np.ndarray) -> list[SlotTrack]:
     """
     Recognize every highway track/slot on screen (empty + occupied), top→bottom.
@@ -433,6 +536,7 @@ def _discover_all_tracks(gray: np.ndarray, color: np.ndarray) -> list[SlotTrack]
         for i, t in enumerate(tracks)
     )
     log(f"[Trucks] track discovery: {len(tracks)} track(s) → {detail}")
+    _maybe_learn_top_row_yf(tracks, gray.shape[:2])
     return tracks
 
 
@@ -442,6 +546,18 @@ def _upper_plus(gray: np.ndarray, color: np.ndarray) -> Match | None:
 
     - Uppermost empty → return that +
     - Uppermost occupied (en route / chest) → skip (do not click lower +)
+
+    Guard against an invisible row 1: a truck currently en route (launched,
+    not yet arrived) can render with no "+"/chest/color-blob signature at
+    all in the highway band, so it silently disappears from track discovery
+    instead of showing up as "occupied" — every lower row then shifts up one
+    position and the topmost VISIBLE slot gets mistaken for the true upper
+    slot. Confirmed live 2026-08-01: rows 2-4 discovered clean and
+    unchanged, row 1 (already had a truck sent ~30min earlier) fully
+    invisible; a second truck got launched into what the code believed was
+    "the upper slot" but was really row 2 — two trucks concurrently en
+    route. Refuse instead of guessing whenever the topmost visible slot
+    sits meaningfully below the last confirmed true top-row position.
     """
     tracks = _discover_all_tracks(gray, color)
     if not tracks:
@@ -455,6 +571,21 @@ def _upper_plus(gray: np.ndarray, color: np.ndarray) -> Match | None:
             f"[Trucks] upper track OCCUPIED "
             f"({upper.source} yf={upper.phys_y / h:.3f}) — "
             f"leave it (ignoring {lower_empty} lower empty +)"
+        )
+        return None
+
+    top_row_max_yf = _load_top_row_yf(gray.shape[:2]) + trucks_cfg()["top_row_tolerance"]
+    upper_yf = upper.phys_y / h
+    if upper_yf > top_row_max_yf:
+        log(
+            f"[Trucks] upper candidate yf={upper_yf:.3f} is below the known "
+            f"top-row line (max={top_row_max_yf:.3f}) — row 1 is likely "
+            f"occupied by an in-transit truck invisible to detection; "
+            f"refusing rather than sending into what is probably row 2+"
+        )
+        log_skip(
+            "trucks_top_row_hidden",
+            detail=f"upper_yf={upper_yf:.3f} max={top_row_max_yf:.3f}",
         )
         return None
 
@@ -1021,6 +1152,8 @@ def run_trucks_flow() -> str:
 
     claimed = _claim_arrived()
     print(f"[Trucks] claimed={claimed}")
+    if claimed:
+        record_claim("trucks_claimed", claimed)
 
     color, gray = capture_both()
     trade_n = _read_trade_count(color)
@@ -1031,5 +1164,7 @@ def run_trucks_flow() -> str:
         return f"claimed={claimed}; day full 4/4"
 
     send_status = _send_upper_truck(allow_purple, max_refreshes)
+    if send_status.startswith("sent:"):
+        record_claim("trucks_sent")
     _exit_trucks()
     return f"claimed={claimed}; {send_status}"

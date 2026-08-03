@@ -48,12 +48,14 @@ python lastz_watcher.py       # start the watcher loop directly
 | # | Option | What it does |
 |---|--------|----------------|
 | 1 | Claim Alliance Gifts (once) | Runs the full collection sequence once (see below) |
-| 2 | Watcher loop | Repeats that same sequence every `alliance_interval_sec` (default **180s**) |
+| 2 | Watcher loop | Repeats that same sequence every `alliance_interval_sec` (default **180s**). **Helicopter priority** when `helicopter.enabled` — BR heli badge preempts gifts, then gifts resume |
 | 3 | Fix Hebrew (CrossOver bottle) | **One-time bottle setup** (see below) — not part of the gifts flow |
 | 4 | Help watcher | Tight poll of the **bottom-right 1/8** of the game window; clicks the handshake Help icon as soon as it blinks. Focuses once, then leaves focus alone so you can play. Ctrl+C to stop. |
-| 5 | Exit | Quit |
+| 5 | Show stats | Monthly motivation ledger — itemized loot (gifts / battlefield / drone), runtime hours, donations, trucks counts |
+| 6 | Helicopter monitor | Watches BR heli indication and runs the full Helicopter flow when spotted |
+| 7 | Exit | Quit |
 
-Menu **1** and **2** run the **same** flow. There are no separate menus for drone, battlefield, gifts, or techs. Menu **4** is Help-only (not gifts/techs/trucks).
+Menu **1** and **2** run the **same** gifts flow. Menu **2** also polls for Helicopter (Explore Treasure) and yields gifts at step boundaries when the BR heli badge appears. Menu **4** is Help-only. Menu **6** is Heli-only. After each collection run (and on watcher/help Ctrl+C), a short stats summary is printed; open menu **5** anytime for the full month view.
 
 ### Fix Hebrew (CrossOver) — run once
 
@@ -218,6 +220,24 @@ All of these live in [`config.yaml`](config.yaml). Restart / re-run the menu aft
 | `trucks.highway_band` | `[0.10, 0.78, 0.28, 0.72]` | Scan band to discover **all** tracks; code then uses **uppermost only**. |
 | `trucks.save_color_debug` | `true` | Save ROI+mask crops under `logs/debug/trucks/color/` so you can VERIFY labels. |
 | `trucks.open_every_n_runs` | `5` | Also open every Nth gifts run (even without a badge). **Badge always opens immediately.** |
+
+### Motivation stats
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `stats.enabled` | `true` | Record itemized loot / runtime / donations |
+| `stats.path` | `data/motivation_stats.json` | Local monthly ledger (gitignored) |
+
+### Helicopter
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `helicopter.enabled` | `true` | BR poll + priority preempt in menu **2**; menu **6** monitor |
+| `helicopter.poll_sec` | `1.0` | How often to look for BR heli indication |
+| `helicopter.search_max_sec` | `360` | Click Search when timer ≤ 00:06:00 |
+| `helicopter.prize_at_sec` | `1` | Rapid-click prize when timer ≤ 00:00:01 |
+| `helicopter.prize_clicks` | `120` | Burst count for limited `N/10` reward |
+| `helicopter.thank_you_text` | `Thank You from LastZ-Automation` | Alliance chat message after prize |
 
 ### Vision thresholds
 

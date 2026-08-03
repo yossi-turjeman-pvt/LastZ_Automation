@@ -8,6 +8,7 @@ import contextlib
 import ctypes
 import os
 import subprocess
+import threading
 from functools import lru_cache
 
 import cv2
@@ -15,15 +16,41 @@ import numpy as np
 
 from lastz.config import game_process
 
-_TEMP_SCREEN = "/tmp/lastz_screen.png"
+# Per-process-unique was not enough on its own: the watcher runs the
+# helicopter BR-monitor as a background *thread* inside the same process
+# as the main click-driving flow (see helicopter.start_heli_monitor()),
+# polling capture_game_window_bg() roughly once a second. With a single
+# PID-keyed path, that background thread and the main flow thread could
+# both write/read this exact file concurrently — one thread's
+# `screencapture` write landing in between another thread's write and its
+# own subsequent `cv2.imread`, so a thread could silently read a
+# screenshot snapped for a *different* thread at a *different* moment
+# (confirmed live: this fed stale Alliance-Gifts panel pixels into
+# post-claim loot OCR because the heli monitor thread overwrote the file
+# mid-flow). Keying by (pid, thread ident) gives every thread its own file
+# so concurrent capture threads can never collide. Do not revert to a
+# pid-only or fixed path.
+def _temp_screen_path() -> str:
+    return f"/tmp/lastz_screen_{os.getpid()}_{threading.get_ident()}.png"
+
 
 # Reference calibration (built-in Retina laptop, game fullscreen).
 REF_CAPTURE_SIZE = (3024, 1964)
 REF_WINDOW_SIZE = (1512, 982)
 
+# Legacy module-level globals — kept (and still writable) purely so existing
+# tests that do `screen._last_capture_size = ...` / `screen._active_display_bounds
+# = ...` before calling a helper in the *same* thread keep working unchanged.
+# Real production reads/writes go through the thread-local storage below so
+# concurrent threads (main flow vs. background heli-BR-monitor) never see or
+# clobber each other's capture state — see _temp_screen_path() docstring
+# above for why that isolation matters. Every accessor below falls back to
+# these globals only when the current thread has never captured anything.
 _last_capture_size: tuple[int, int] | None = None
 _active_display: int | None = None
 _active_display_bounds: tuple[float, float, float, float] | None = None  # logical x,y,w,h
+
+_local = threading.local()
 
 
 class _CGPoint(ctypes.Structure):
@@ -50,21 +77,30 @@ _CG.CGDisplayBounds.restype = _CGRect
 
 
 def _last_size() -> tuple[int, int]:
-    if _last_capture_size is None:
+    val = getattr(_local, "capture_size", None)
+    if val is None:
+        val = _last_capture_size
+    if val is None:
         raise RuntimeError("No screen capture available yet — call capture() first.")
-    return _last_capture_size
+    return val
 
 
 def active_capture_display() -> int:
-    if _active_display is None:
+    val = getattr(_local, "active_display", None)
+    if val is None:
+        val = _active_display
+    if val is None:
         return resolve_capture_display()
-    return _active_display
+    return val
 
 
 def active_display_bounds() -> tuple[float, float, float, float]:
-    if _active_display_bounds is None:
+    val = getattr(_local, "active_display_bounds", None)
+    if val is None:
+        val = _active_display_bounds
+    if val is None:
         return 0.0, 0.0, float(_last_size()[0]), float(_last_size()[1])
-    return _active_display_bounds
+    return val
 
 
 @lru_cache(maxsize=1)
@@ -124,18 +160,19 @@ end tell
 
 
 def _capture_file(display: int) -> bool:
+    path = _temp_screen_path()
     result = subprocess.run(
-        ["screencapture", "-x", "-D", str(display), _TEMP_SCREEN],
+        ["screencapture", "-x", "-D", str(display), path],
         capture_output=True,
         text=True,
     )
-    return result.returncode == 0 and os.path.exists(_TEMP_SCREEN)
+    return result.returncode == 0 and os.path.exists(path)
 
 
 def _probe_display_size(display: int) -> tuple[int, int] | None:
     if not _capture_file(display):
         return None
-    img = cv2.imread(_TEMP_SCREEN, cv2.IMREAD_GRAYSCALE)
+    img = cv2.imread(_temp_screen_path(), cv2.IMREAD_GRAYSCALE)
     if img is None:
         return None
     h, w = img.shape
@@ -203,60 +240,153 @@ def resolve_capture_display() -> int:
 
 
 def _set_active_display_bounds(display_index: int) -> None:
-    global _active_display_bounds
     for disp in list_displays():
         if disp["index"] == display_index:
-            _active_display_bounds = (disp["x"], disp["y"], disp["w"], disp["h"])
+            _local.active_display_bounds = (disp["x"], disp["y"], disp["w"], disp["h"])
             return
     cap_w, cap_h = _last_size()
-    _active_display_bounds = (0.0, 0.0, float(cap_w), float(cap_h))
+    _local.active_display_bounds = (0.0, 0.0, float(cap_w), float(cap_h))
 
 
 def _run_capture(display: int | None = None) -> None:
-    global _last_capture_size, _active_display
-
     display = display if display is not None else resolve_capture_display()
     if not _capture_file(display):
         raise RuntimeError(f"screencapture failed for display {display}")
 
-    img = cv2.imread(_TEMP_SCREEN, cv2.IMREAD_GRAYSCALE)
+    path = _temp_screen_path()
+    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
     if img is None:
-        raise RuntimeError(f"screencapture produced no readable image at {_TEMP_SCREEN}")
+        raise RuntimeError(f"screencapture produced no readable image at {path}")
 
     h, w = img.shape
-    _last_capture_size = (w, h)
-    _active_display = display
+    _local.capture_size = (w, h)
+    _local.active_display = display
     _set_active_display_bounds(display)
 
 
 def capture() -> np.ndarray:
     _run_capture()
-    img = cv2.imread(_TEMP_SCREEN, cv2.IMREAD_GRAYSCALE)
+    path = _temp_screen_path()
+    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
     if img is None:
-        raise RuntimeError(f"screencapture produced no readable image at {_TEMP_SCREEN}")
+        raise RuntimeError(f"screencapture produced no readable image at {path}")
     return img
 
 
 def capture_color() -> np.ndarray:
     _run_capture()
-    img = cv2.imread(_TEMP_SCREEN, cv2.IMREAD_COLOR)
+    path = _temp_screen_path()
+    img = cv2.imread(path, cv2.IMREAD_COLOR)
     if img is None:
-        raise RuntimeError(f"screencapture produced no readable image at {_TEMP_SCREEN}")
+        raise RuntimeError(f"screencapture produced no readable image at {path}")
     return img
 
 
 def capture_both() -> tuple[np.ndarray, np.ndarray]:
     _run_capture()
-    color = cv2.imread(_TEMP_SCREEN, cv2.IMREAD_COLOR)
+    path = _temp_screen_path()
+    color = cv2.imread(path, cv2.IMREAD_COLOR)
     if color is None:
-        raise RuntimeError(f"screencapture produced no readable image at {_TEMP_SCREEN}")
+        raise RuntimeError(f"screencapture produced no readable image at {path}")
     gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
     return color, gray
 
 
+def capture_game_window_bg() -> tuple[np.ndarray, np.ndarray] | None:
+    """
+    Capture the game window's contents off-screen via CGWindowListCreateImage
+    — works even when the window is fully covered by another app (e.g.
+    Cursor), as long as it's on the active Space and not minimized. Does
+    NOT require the game to be frontmost and does not steal focus.
+
+    Why this exists: capture()/capture_both() do a full-DISPLAY
+    screencapture, which grabs whatever app is actually visible on top —
+    if the game is occluded (e.g. by this very chat window), that captures
+    Cursor's UI instead and can false-positive template matches against
+    it. This is used by the passive BR-icon background monitor, which must
+    poll continuously without disrupting whatever the user is doing in
+    another app. The interactive flow (which needs to click, and clicking
+    requires the game to actually be on top to receive the click) still
+    uses focus_game() + capture_both() unchanged.
+
+    Returns (color, gray) or None if the window can't be found/captured —
+    caller should treat None as "skip this poll", not as an error.
+    """
+    try:
+        import Quartz
+    except ImportError:
+        return None
+    proc = _game_process_name()
+    try:
+        win_list = Quartz.CGWindowListCopyWindowInfo(
+            Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID
+        )
+    except Exception:
+        return None
+    win_id = None
+    best_area = -1.0
+    for w in win_list or []:
+        owner = str(w.get("kCGWindowOwnerName", ""))
+        if proc.lower() not in owner.lower():
+            continue
+        bounds = w.get("kCGWindowBounds") or {}
+        area = float(bounds.get("Width", 0)) * float(bounds.get("Height", 0))
+        if area > best_area:
+            best_area = area
+            win_id = w.get("kCGWindowNumber")
+    if win_id is None:
+        return None
+    try:
+        image = Quartz.CGWindowListCreateImage(
+            Quartz.CGRectNull,
+            Quartz.kCGWindowListOptionIncludingWindow,
+            win_id,
+            Quartz.kCGWindowImageDefault,
+        )
+    except Exception:
+        return None
+    if image is None:
+        return None
+    w = Quartz.CGImageGetWidth(image)
+    h = Quartz.CGImageGetHeight(image)
+    if not w or not h:
+        return None
+    provider = Quartz.CGImageGetDataProvider(image)
+    data = Quartz.CGDataProviderCopyData(provider)
+    bytes_per_row = Quartz.CGImageGetBytesPerRow(image)
+    buf = np.frombuffer(data, dtype=np.uint8)
+    arr = buf.reshape((h, bytes_per_row // 4, 4))[:, :w, :]
+    color = cv2.cvtColor(arr, cv2.COLOR_BGRA2BGR)
+    gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
+
+    # This capture IS the window's own content already (no desktop chrome,
+    # no other apps) — set the same capture state _run_capture() would set,
+    # but treating the window itself as the "display", so downstream
+    # helpers (ensure_template_scale, game_window_roi, physical_to_logical)
+    # that read active_display_bounds()/_last_size() work unmodified and
+    # don't try to re-crop or re-map against the real desktop.
+    #
+    # This writes to *this thread's* thread-local capture state only (see
+    # _temp_screen_path() docstring at the top of this module) — it used to
+    # mutate shared module globals, which is exactly what let the
+    # background heli-BR-monitor thread (the caller of this function)
+    # stomp on the main flow thread's notion of the active display/capture
+    # size while a click-driving flow was mid-step. Safe to call from any
+    # thread now; still read-only w.r.t. other threads' state.
+    try:
+        wx, wy, ww, wh = get_game_window_bounds()
+        _local.active_display_bounds = (float(wx), float(wy), float(ww), float(wh))
+    except RuntimeError:
+        _local.active_display_bounds = (0.0, 0.0, float(w), float(h))
+    _local.capture_size = (w, h)
+    _local.active_display = None
+    return color, gray
+
+
 def cleanup_temp() -> None:
-    if os.path.exists(_TEMP_SCREEN):
-        os.remove(_TEMP_SCREEN)
+    path = _temp_screen_path()
+    if os.path.exists(path):
+        os.remove(path)
 
 
 @contextlib.contextmanager
@@ -414,16 +544,17 @@ def capture_region(x: float, y: float, w: float, h: float) -> np.ndarray:
     ry = int(round(y))
     rw = max(1, int(round(w)))
     rh = max(1, int(round(h)))
+    path = _temp_screen_path()
     result = subprocess.run(
-        ["screencapture", "-x", "-R", f"{rx},{ry},{rw},{rh}", _TEMP_SCREEN],
+        ["screencapture", "-x", "-R", f"{rx},{ry},{rw},{rh}", path],
         capture_output=True,
         text=True,
     )
-    if result.returncode != 0 or not os.path.exists(_TEMP_SCREEN):
+    if result.returncode != 0 or not os.path.exists(path):
         raise RuntimeError(
             f"screencapture -R failed ({rx},{ry},{rw},{rh}): {result.stderr.strip()}"
         )
-    img = cv2.imread(_TEMP_SCREEN, cv2.IMREAD_GRAYSCALE)
+    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
     if img is None:
-        raise RuntimeError(f"Region capture unreadable at {_TEMP_SCREEN}")
+        raise RuntimeError(f"Region capture unreadable at {path}")
     return img

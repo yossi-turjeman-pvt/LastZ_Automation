@@ -1,5 +1,5 @@
 """
-Interactive master menu — Alliance Gifts + CrossOver helpers.
+Interactive master menu — Alliance Gifts + Helicopter + CrossOver helpers.
 """
 import time
 
@@ -11,10 +11,12 @@ def _header() -> None:
     print("          LASTZ — ALLIANCE GIFTS                     ")
     print("=" * 60)
     print(" 1. Claim Alliance Gifts (once)")
-    print(" 2. Watcher loop (claim on interval)")
+    print(" 2. Watcher loop (claim on interval + Heli priority)")
     print(" 3. Fix Hebrew (CrossOver) — one-time setup")
     print(" 4. Help watcher (handshake blink clicker)")
-    print(" 5. Exit")
+    print(" 5. Show stats (motivation ledger)")
+    print(" 6. Helicopter monitor (BR watch + heli flow)")
+    print(" 7. Exit")
     print("=" * 60)
 
 
@@ -22,7 +24,7 @@ def main() -> None:
     while True:
         _header()
         try:
-            choice = input("Enter your choice (1-5): ").strip()
+            choice = input("Enter your choice (1-7): ").strip()
         except KeyboardInterrupt:
             print("\nExiting. Goodbye!")
             break
@@ -41,6 +43,7 @@ def main() -> None:
 
         elif choice == "2":
             print("\n>>> Starting Alliance Gifts Watcher Loop...")
+            print("    Helicopter priority ON when helicopter.enabled=true\n")
             from lastz.watcher import run_watcher_loop
             run_watcher_loop()
 
@@ -57,9 +60,21 @@ def main() -> None:
             run_help_watcher_loop()
 
         elif choice == "5":
+            from lastz.stats import print_month_stats
+            print()
+            print_month_stats()
+            print()
+
+        elif choice == "6":
+            print("\n>>> Helicopter monitor — watches BR heli indication...")
+            print("    Ctrl+C returns to this menu.\n")
+            from lastz.flows.helicopter import run_helicopter_monitor_loop
+            run_helicopter_monitor_loop()
+
+        elif choice == "7":
             print("Exiting. Goodbye!")
             break
 
         else:
-            print("Invalid choice. Please enter a number between 1 and 5.")
+            print("Invalid choice. Please enter a number between 1 and 7.")
             time.sleep(1)
