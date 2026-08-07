@@ -82,13 +82,25 @@ def is_game_frontmost() -> bool:
     return result.stdout.strip() == proc
 
 
-def _require_game_frontmost() -> None:
-    """Verify focus, re-focusing once if needed; raise rather than fire blindly."""
-    if is_game_frontmost():
-        return
-    focus_game()
-    if is_game_frontmost():
-        return
+def _require_game_frontmost(attempts: int = 3) -> None:
+    """
+    Verify focus, re-focusing (with retries) if needed; raise rather than
+    fire blindly.
+
+    A single refocus attempt was too brittle for long-running, time-sensitive
+    flows (heli): a transient focus flicker (e.g. an OS/app switch animation
+    still settling) killed the entire in-progress flow on one missed click
+    instead of just costing a couple seconds of retry. Real incident
+    2026-08-04: a heli run died mid-March step this way. Each attempt still
+    calls focus_game() (~1.5s) before rechecking, so this raises only after
+    genuinely failing to (re)focus for a few seconds straight.
+    """
+    for _ in range(max(1, attempts)):
+        if is_game_frontmost():
+            return
+        focus_game()
+        if is_game_frontmost():
+            return
     raise GameNotFocusedError(
         f"Refusing to send input: '{game_process()}' is not the frontmost app."
     )

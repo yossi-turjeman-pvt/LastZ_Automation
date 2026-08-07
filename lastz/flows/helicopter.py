@@ -705,27 +705,62 @@ def _step_march_formation() -> bool:
         _annotate(color0, "step3_missed_out_ABORT", [])
         return False
 
-    dx, dy = cfg["empty_land_offset_frac"]
-    fx, fy = 0.50 + dx, 0.52 + dy
-    _click_frac(fx, fy, "heli_empty_land", color0)
-    time.sleep(1.2)
+    # Multiple candidate offsets, not one fixed point: real incidents
+    # (2026-08-03) showed the single configured offset landing on whatever
+    # happens to be there instead of open ground — an NPC monster camp or a
+    # dense cluster of allied cities, either of which opens a different
+    # radial menu (Attack / city info) with no March ring at all. Ported
+    # from scripts/dev/heli_learn_loop.py's practice_march_once(), which
+    # already proved this multi-try approach live.
+    base_dx, base_dy = cfg["empty_land_offset_frac"]
+    offsets = [
+        (base_dx, base_dy),
+        (0.0, 0.04),
+        (-0.06, 0.02),
+        (0.06, 0.06),
+        (-0.03, -0.04),
+        (0.04, -0.02),
+    ]
 
-    color, gray = capture_both()
-    _save_raw(color, "step3_after_empty_land")
-    if _is_missed_out_modal(color):
-        heli_log("[Heli] FAIL: missed-out modal after empty land — abort (never reached live heli)")
-        _annotate(color, "step3_missed_out_AFTER_EMPTY", [])
-        return False
+    hit = None
+    color = color0
+    gray = None
+    for i, (dx, dy) in enumerate(offsets):
+        color0, _ = capture_both()
+        if _is_missed_out_modal(color0):
+            heli_log("[Heli] FAIL: missed-out modal mid empty-land search — abort Step3")
+            _annotate(color0, "step3_missed_out_AFTER_EMPTY", [])
+            return False
+        fx, fy = 0.50 + dx, 0.52 + dy
+        _click_frac(fx, fy, f"heli_empty_land_{i}", color0)
+        time.sleep(1.2)
+        color, gray = capture_both()
+        _save_raw(color, f"step3_after_empty_land_{i}")
+        candidate = _find_march_ring(gray, color)
+        if candidate is None:
+            heli_log(f"[Heli] no ring after offset[{i}] frac=({fx:.2f},{fy:.2f})")
+            continue
+        h, w = gray.shape[:2]
+        if abs(candidate.phys_x / w - fx) < 0.18 and abs(candidate.phys_y / h - fy) < 0.22:
+            heli_log(
+                f"[Heli] March ring after offset[{i}] frac=({fx:.2f},{fy:.2f}) "
+                f"conf={getattr(candidate, 'confidence', 0):.3f}"
+            )
+            hit = candidate
+            break
+        heli_log(
+            f"[Heli] rejecting far match offset[{i}] "
+            f"hit=({candidate.phys_x/w:.2f},{candidate.phys_y/h:.2f}) click=({fx:.2f},{fy:.2f})"
+        )
 
-    hit = _find_march_ring(gray, color)
     if hit is None:
-        soft = find_all_templates(gray, "heli_march.png", 0.40)
+        soft = find_all_templates(gray, "heli_march.png", 0.40) if gray is not None else []
         _annotate(
             color,
             "step3_march_MISS",
             [_match_dict(x, "heli_march", ok=False) for x in soft[:8]],
         )
-        heli_log("[Heli] FAIL: March ring not found — no blind frac click")
+        heli_log("[Heli] FAIL: March ring not found after all empty-land offsets — no blind frac click")
         return False
     _annotate(color, "step3_march_HIT", [_match_dict(hit, "heli_march")])
     _click_match(hit, "heli_march", "heli_march.png")
