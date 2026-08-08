@@ -695,6 +695,30 @@ def _find_march_confirm_ocr(color: np.ndarray) -> tuple[float, float] | None:
     return None
 
 
+def _phys_to_window_frac(phys_x: float, phys_y: float) -> tuple[float, float]:
+    """
+    Convert a full-capture physical-pixel point into the SAME game-window-
+    relative fraction space that _click_frac()/window_click() use for fx/fy.
+
+    _find_march_ring() returns matches in full-capture phys coordinates
+    (offset via game_window_roi()'s origin_x/origin_y, see vision.py), which
+    is NOT the same space as the game-window fractions used to pick the
+    empty-land click point. Comparing them directly (as a prior version of
+    this code did, dividing phys_x by the full-capture width) silently
+    breaks whenever the game window doesn't fill the whole display/capture
+    (e.g. ultrawide letterboxing). Route both through logical screen space
+    via physical_to_logical() + the window's logical bounds, already used
+    for this exact purpose by window_click() in lastz/screen.py.
+    """
+    from lastz.screen import get_game_window_bounds
+
+    lx, ly = physical_to_logical(phys_x, phys_y)
+    wx, wy, ww, wh = get_game_window_bounds()
+    if ww <= 0 or wh <= 0:
+        return 0.5, 0.5
+    return (lx - wx) / ww, (ly - wy) / wh
+
+
 def _step_march_formation() -> bool:
     heli_log("[Heli] Step3: empty land → March → weakest zZz")
     cfg = helicopter_cfg()
@@ -740,8 +764,8 @@ def _step_march_formation() -> bool:
         if candidate is None:
             heli_log(f"[Heli] no ring after offset[{i}] frac=({fx:.2f},{fy:.2f})")
             continue
-        h, w = gray.shape[:2]
-        if abs(candidate.phys_x / w - fx) < 0.18 and abs(candidate.phys_y / h - fy) < 0.22:
+        cand_fx, cand_fy = _phys_to_window_frac(candidate.phys_x, candidate.phys_y)
+        if abs(cand_fx - fx) < 0.18 and abs(cand_fy - fy) < 0.22:
             heli_log(
                 f"[Heli] March ring after offset[{i}] frac=({fx:.2f},{fy:.2f}) "
                 f"conf={getattr(candidate, 'confidence', 0):.3f}"
@@ -750,7 +774,7 @@ def _step_march_formation() -> bool:
             break
         heli_log(
             f"[Heli] rejecting far match offset[{i}] "
-            f"hit=({candidate.phys_x/w:.2f},{candidate.phys_y/h:.2f}) click=({fx:.2f},{fy:.2f})"
+            f"hit=({cand_fx:.2f},{cand_fy:.2f}) click=({fx:.2f},{fy:.2f})"
         )
 
     if hit is None:

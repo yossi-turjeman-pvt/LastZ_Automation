@@ -138,6 +138,21 @@ def run_help_watcher_loop() -> None:
                 continue
 
             # PRIORITY: Check for healing (slower interval)
+            #
+            # This runs synchronously in the same loop that polls the help
+            # icon, blocking it for the duration of a healing cycle - by
+            # design (healing is prioritized), not an oversight. Evaluated
+            # backgrounding this to a thread (like helicopter.py's read-only
+            # BR monitor) and rejected it: the heli monitor only ever reads
+            # the screen (capture_game_window_bg(), never focus-stealing),
+            # while healing must click (rapid_click/click/press_escape),
+            # all of which require the game frontmost - running that
+            # concurrently with this loop's own clicks risks real
+            # cursor/focus races, not just a shared-state bug. The OCR-
+            # verified batch-size step (see healing.py's _zero_out_stepper)
+            # already keeps the common-case blocking window to ~1-2s rather
+            # than a blind worst-case sweep, which was the actual pressure
+            # point pushing toward threading in the first place.
             now = time.time()
             if healing_enabled and (now - last_healing_check) >= healing_check_interval:
                 last_healing_check = now
