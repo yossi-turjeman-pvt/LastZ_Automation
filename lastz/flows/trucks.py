@@ -621,6 +621,11 @@ def _sample_picker_color(color: np.ndarray) -> ColorSample:
 
     Conservative on purpose: gray/green trucks with a few gold accents must
     NOT count as orange. Green body pixels veto an orange call.
+
+    Fix 2026-08-08: Gray trucks with orange cargo/decorations were wrongly
+    classified as "orange" because the code only counted orange pixels without
+    checking if gray/white dominated. Now detects gray/white body color and
+    rejects orange classification when gray is the main truck body.
     """
     h, w = color.shape[:2]
     y0, y1, x0, x1 = _picker_roi_box(h, w)
@@ -628,13 +633,28 @@ def _sample_picker_color(color: np.ndarray) -> ColorSample:
     if roi.size == 0:
         return ColorSample("unknown", 0, 0, 0)
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    # Slightly tighter orange (skip pale sand / weak yellow accents)
+
+    # Color masks
     orange = cv2.inRange(hsv, (6, 110, 120), (26, 255, 255))
     purple = cv2.inRange(hsv, (120, 70, 70), (170, 255, 255))
     green = cv2.inRange(hsv, (40, 70, 70), (95, 255, 255))
+    # Gray/white detection: low saturation (< 70), any hue, brightness 60-255
+    # This catches gray truck bodies that have orange decorations
+    gray_white = cv2.inRange(hsv, (0, 0, 60), (180, 70, 255))
+
     o_px = int(cv2.countNonZero(orange))
     p_px = int(cv2.countNonZero(purple))
     g_px = int(cv2.countNonZero(green))
+    gw_px = int(cv2.countNonZero(gray_white))
+
+    total_roi_px = roi.shape[0] * roi.shape[1]
+
+    # Gray/white body dominates → gray truck with orange accents, never "orange"
+    # Real incident 2026-08-08: gray truck with orange cargo bags had 2907 orange
+    # pixels but was misclassified as orange. Gray body pixels should veto.
+    if gw_px >= 3500 and gw_px >= o_px * 1.2:
+        log(f"[Trucks] Rejecting as 'other': gray/white body dominates (gw={gw_px} vs o={o_px})")
+        return ColorSample("other", o_px, p_px, g_px)
 
     # Green body dominates → gray-green / green truck, never "orange"
     if g_px >= 1500 and g_px >= o_px * 0.75:
@@ -643,7 +663,11 @@ def _sample_picker_color(color: np.ndarray) -> ColorSample:
     min_px = 2500  # was 800 — gold stars alone used to false-trigger
     if o_px < min_px and p_px < min_px:
         return ColorSample("other", o_px, p_px, g_px)
-    if o_px >= min_px and o_px >= p_px * 1.3 and o_px >= max(g_px * 2.0, 1):
+
+    # Orange must be dominant (not just decorations): require at least 15% of ROI
+    # AND significantly more than gray/white pixels
+    min_dominance_pct = 0.15
+    if o_px >= min_px and o_px >= total_roi_px * min_dominance_pct and o_px >= p_px * 1.3 and o_px >= max(g_px * 2.0, 1) and o_px >= gw_px * 0.8:
         return ColorSample("orange", o_px, p_px, g_px)
     if p_px >= min_px and p_px > o_px and p_px >= g_px:
         return ColorSample("purple", o_px, p_px, g_px)
@@ -682,19 +706,23 @@ def _save_color_verify(
         o_m = cv2.inRange(hsv, (6, 110, 120), (26, 255, 255))
         p_m = cv2.inRange(hsv, (120, 70, 70), (170, 255, 255))
         g_m = cv2.inRange(hsv, (40, 70, 70), (95, 255, 255))
-        # Stack: ROI | orange-mask | purple-mask | green-mask
+        gw_m = cv2.inRange(hsv, (0, 0, 60), (180, 70, 255))
+        # Stack: ROI | orange-mask | purple-mask | green-mask | gray/white-mask
         o_bgr = cv2.cvtColor(o_m, cv2.COLOR_GRAY2BGR)
         p_bgr = cv2.cvtColor(p_m, cv2.COLOR_GRAY2BGR)
         g_bgr = cv2.cvtColor(g_m, cv2.COLOR_GRAY2BGR)
+        gw_bgr = cv2.cvtColor(gw_m, cv2.COLOR_GRAY2BGR)
         # Tint masks for readability
         o_bgr[:, :, 0] = 0
         o_bgr[:, :, 1] = np.minimum(o_bgr[:, :, 1] + 40, 255)
         p_bgr[:, :, 1] = 0
         g_bgr[:, :, 2] = 0
-        strip = np.hstack([roi, o_bgr, p_bgr, g_bgr])
+        # Gray/white stays white (all channels equal)
+        strip = np.hstack([roi, o_bgr, p_bgr, g_bgr, gw_bgr])
+        gw_px = int(cv2.countNonZero(gw_m))
         label = (
             f"{sample.kind}  o={sample.orange_px} p={sample.purple_px} "
-            f"g={sample.green_px}  [{phase} r{round_i}]"
+            f"g={sample.green_px} gw={gw_px}  [{phase} r{round_i}]"
         )
         cv2.putText(
             strip,

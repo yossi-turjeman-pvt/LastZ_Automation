@@ -228,17 +228,19 @@ _heli_checkpoint(source, "step_name")  # raises HeliInterrupt if heli spotted
 
 2. **Trucks upper slot only**. Code deliberately ignores lower empty slots - only the uppermost track is used for sending. This prevents double-sends when en-route trucks become invisible.
 
-3. **Escape-safe dismiss**. Startup `reset_ui` uses Escape + verified Cancel button, never blind map clicks (which could dismiss HQ buildings).
+3. **Truck color detection requires dominance**. Orange/purple classification now checks both pixel count AND dominance percentage. A gray truck with orange cargo bags has its gray body pixels counted - if gray dominates, it's correctly classified as "other" not "orange". Fixed 2026-08-08 after real incident where 2907 orange pixels (decorations) on a gray body caused wrong classification.
 
-4. **Focus before input**. `_require_game_frontmost()` is called before every click/keystroke. A backgrounded game silently drops input.
+4. **Escape-safe dismiss**. Startup `reset_ui` uses Escape + verified Cancel button, never blind map clicks (which could dismiss HQ buildings).
 
-5. **Tesseract required for OCR**. Drone gift timer reading needs system Tesseract. Flow gracefully skips if unavailable.
+5. **Focus before input**. `_require_game_frontmost()` is called before every click/keystroke. A backgrounded game silently drops input.
 
-6. **CrossOver Hebrew fix is one-time setup** (menu 3). Not part of regular flows.
+6. **Tesseract required for OCR**. Drone gift timer reading needs system Tesseract. Flow gracefully skips if unavailable.
 
-7. **Template matching uses grayscale**. Color is only used for HSV filtering (trucks, tech thumbs).
+7. **CrossOver Hebrew fix is one-time setup** (menu 3). Not part of regular flows.
 
-8. **Concurrent captures need thread-local state**. Background threads must not share `_last_capture_size` or `_active_display_bounds`.
+8. **Template matching uses grayscale**. Color is only used for HSV filtering (trucks, tech thumbs).
+
+9. **Concurrent captures need thread-local state**. Background threads must not share `_last_capture_size` or `_active_display_bounds`.
 
 ## Code Style
 
