@@ -13,7 +13,7 @@ from pathlib import Path
 
 from lastz.config import healing_cfg, logs_dir, templates_dir, threshold as cfg_threshold
 from lastz.input import click, press_escape, rapid_click
-from lastz.ocr import read_stepper_number, tesseract_available
+from lastz.ocr import digit_templates_available, read_stepper_number
 from lastz.screen import (
     capture,
     capture_region,
@@ -118,7 +118,34 @@ def _read_stepper_value(plus: MatchWithBBox) -> int | None:
     screen = capture()
     ensure_template_scale(screen)
     x, y, w, h = _number_field_crop(plus)
-    return read_stepper_number(screen, x, y, w, h)
+    value = read_stepper_number(screen, x, y, w, h)
+    if value is None:
+        _dump_stepper_crop(screen, x, y, w, h)
+    return value
+
+
+def _dump_stepper_crop(screen, x: int, y: int, w: int, h: int) -> None:
+    """
+    Save the exact crop OCR failed to read, for later inspection - a live
+    run (2026-08-09) saw the final "set to batch_size" OCR read fail 3
+    cycles in a row with no visual evidence saved to explain why (a banner/
+    overlay over the modal? a count-up animation not yet settled?).
+    """
+    try:
+        import cv2
+
+        h_screen, w_screen = screen.shape[:2]
+        x0, y0 = max(0, x), max(0, y)
+        x1, y1 = min(w_screen, x + w), min(h_screen, y + h)
+        crop = screen[y0:y1, x0:x1]
+        if crop.size == 0:
+            return
+        out_dir = logs_dir() / "debug"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        cv2.imwrite(str(out_dir / f"healing_stepper_ocr_fail_{ts}.png"), crop)
+    except Exception as exc:
+        log(f"[Healing] WARN: could not save stepper OCR-fail debug crop: {exc}")
 
 
 def _zero_out_stepper(mx: float, my: float, plus: MatchWithBBox, batch_size: int) -> bool:
@@ -127,11 +154,11 @@ def _zero_out_stepper(mx: float, my: float, plus: MatchWithBBox, batch_size: int
     trusting a blind click count. A fixed click count can't guarantee 0 if
     the field's leftover value is larger than assumed (troop counts well
     into the hundreds are common) - silently healing more than batch_size.
-    Returns False (caller must abort, never guess) if tesseract is
-    unavailable or the field never verifies at 0 within the retry budget.
+    Returns False (caller must abort, never guess) if the digit templates
+    are unavailable or the field never verifies at 0 within the retry budget.
     """
-    if not tesseract_available():
-        log("[Healing] ERROR: tesseract unavailable — cannot verify batch size, aborting")
+    if not digit_templates_available():
+        log("[Healing] ERROR: digit templates unavailable — cannot verify batch size, aborting")
         return False
 
     # Initial burst: observed leftover values sit close to batch_size
@@ -159,12 +186,22 @@ def _set_to_target_verified(px: float, py: float, plus: MatchWithBBox, batch_siz
     batch_size - rapid_click's fast burst can drop clicks under load (a real
     gap found live: an initial burst of exactly `batch_size` clicks landed
     on batch_size - 3, not batch_size). Tops up the shortfall and re-verifies
-    rather than trusting the click count; aborts (never guesses) if it
-    overshoots or can't be confirmed within the retry budget.
+    rather than trusting the click count.
+
+    The topmost row can have FEWER wounded troops than the configured
+    batch_size (real incident, 2026-08-09: Destroyer row down to 12 wounded
+    while Charge Knight/Mercenary below still had hundreds) - the game caps
+    "+" at the row's own wounded count, so demanding exactly batch_size is
+    an unreachable target and would loop here forever. If a top-up click
+    burst doesn't move the read value at all, that's the row's real cap;
+    accept it (heal what's actually available) rather than keep retrying
+    an impossible number. Still aborts (never guesses) if it overshoots or
+    the value can't be read at all within the retry budget.
     """
     rapid_click(px, py, count=batch_size, interval=0.02)
     time.sleep(0.3)
 
+    prev_value: int | None = None
     for round_i in range(_SET_VERIFY_ROUNDS):
         value = _read_stepper_value(plus)
         if value == batch_size:
@@ -177,10 +214,17 @@ def _set_to_target_verified(px: float, py: float, plus: MatchWithBBox, batch_siz
         if value > batch_size:
             log(f"[Healing] ERROR: batch quantity {value} overshot target {batch_size}, aborting")
             return False
+        if value == prev_value:
+            log(
+                f"[Healing] Row capped at {value} (< configured batch_size {batch_size}) "
+                f"- healing {value} instead of looping on an unreachable target"
+            )
+            return True
         missing = batch_size - value
         log(f"[Healing] Batch quantity at {value}, topping up {missing} (round {round_i})")
         rapid_click(px, py, count=missing, interval=0.02)
         time.sleep(0.3)
+        prev_value = value
 
     log(f"[Healing] ERROR: Could not verify batch quantity reached {batch_size}, aborting")
     return False
