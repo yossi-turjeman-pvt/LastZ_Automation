@@ -46,6 +46,25 @@ def log(msg: str) -> None:
         f.write(line + "\n")
 
 
+def _safe_dismiss_modal() -> None:
+    """
+    Close the Hospital modal via Escape, then verify it didn't trigger the
+    game's Quit-game confirmation ("Quit Tips") - a real live incident
+    (2026-08-09): Escape on a screen with no actual overlay open can bring
+    up that dialog, and a second bare Escape does NOT dismiss it (only
+    clicking Cancel does - see lastz/flows/base.py's
+    dismiss_quit_tips_if_present(), already relied on by reset_ui() for
+    this exact reason). Left unguarded, a later cycle's blind Escape could
+    just sit there doing nothing while the confirmation lingers on screen.
+    """
+    from lastz.flows.base import dismiss_quit_tips_if_present
+
+    press_escape()
+    time.sleep(0.5)
+    if dismiss_quit_tips_if_present():
+        log("[Healing] WARN: Escape triggered the Quit-game confirmation — dismissed via Cancel")
+
+
 def _find_healing_icon(icon_name: str, band: list[float], thr: float, debug: bool = False) -> tuple[float, float] | None:
     """
     Search for healing icon in the specified band.
@@ -245,7 +264,21 @@ def _set_batch_size(batch_size: int) -> bool:
         minus_matches = find_all_templates(screen, "healing_minus_button.png", thr_minus)
         plus_matches = find_all_templates(screen, "healing_plus_button.png", thr_plus)
         if not minus_matches or not plus_matches:
-            log("[Healing] ERROR: Could not find +/- steppers in modal")
+            # The wounded-troops HUD icon persists as long as ANY of that
+            # type remains wounded, even while a batch of the SAME type is
+            # already mid-heal (locked, no editable stepper - just a
+            # timer). Reopening the modal in that state is expected and
+            # benign, not a failure: the Hospital modal itself is genuinely
+            # open (confirmed via the Heal button), there's just nothing
+            # editable to set right now. Only log/treat this as a real
+            # error if the modal doesn't appear to have opened at all.
+            from lastz.vision import find_template
+
+            thr_heal = cfg_threshold("healing_heal_button")
+            if find_template(screen, "healing_heal_button.png", thr_heal) is not None:
+                log("[Healing] No editable troop row right now (already healing) — nothing to do this cycle")
+            else:
+                log("[Healing] ERROR: Could not find +/- steppers in modal")
             return False
 
         # Topmost row = first troop type listed.
@@ -305,9 +338,8 @@ def check_and_heal_once(band: list[float], batch_size: int, debug: bool = False)
     # work. Zero the stepper out (clamps at 0, so overshooting is safe) then
     # click "+" exactly batch_size times for a deterministic result.
     if not _set_batch_size(batch_size):
-        log("[Healing] ABORT: Could not set batch size safely — closing modal, will retry next poll")
-        press_escape()
-        time.sleep(0.5)
+        log("[Healing] Closing modal, will retry next poll")
+        _safe_dismiss_modal()
         return False
 
     # Step 4: Find and click the "Heal" button

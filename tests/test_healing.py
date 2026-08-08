@@ -59,6 +59,15 @@ class HealingTestBase(unittest.TestCase):
         sleep_patcher.start()
         self.addCleanup(sleep_patcher.stop)
 
+        # _safe_dismiss_modal locally imports dismiss_quit_tips_if_present
+        # from lastz.flows.base - patch at that source (same reasoning as
+        # the local find_template import: patching HL's own namespace
+        # wouldn't intercept a fresh per-call import). Without this, tests
+        # would call the REAL function, which does real screen capture.
+        quit_tips_patcher = patch("lastz.flows.base.dismiss_quit_tips_if_present", return_value=False)
+        self.dismiss_quit_tips = quit_tips_patcher.start()
+        self.addCleanup(quit_tips_patcher.stop)
+
 
 class TestAbortOnBatchSizeFailure(HealingTestBase):
     """Finding 1: never click Heal with an unverified/failed batch size."""
@@ -73,6 +82,36 @@ class TestAbortOnBatchSizeFailure(HealingTestBase):
 
     def test_set_batch_size_returns_false_when_steppers_not_found(self):
         with patch.object(HL, "find_all_templates", return_value=[]):
+            result = HL._set_batch_size(50)
+
+        self.assertFalse(result)
+
+    def test_dismiss_checks_for_quit_confirmation(self):
+        # Real incident (2026-08-09): a bare press_escape() on a screen with
+        # no actual overlay open can trigger the game's Quit-game
+        # confirmation, and a second bare Escape does NOT dismiss it (only
+        # clicking Cancel does). _safe_dismiss_modal must always check.
+        HL._safe_dismiss_modal()
+
+        HL.press_escape.assert_called_once()
+        self.dismiss_quit_tips.assert_called_once()
+
+    def test_dismiss_warns_when_quit_confirmation_appeared(self):
+        self.dismiss_quit_tips.return_value = True
+        with patch.object(HL, "log") as mock_log:
+            HL._safe_dismiss_modal()
+        self.assertTrue(
+            any("Quit-game confirmation" in call.args[0] for call in mock_log.call_args_list)
+        )
+
+    def test_no_editable_row_is_benign_not_an_error(self):
+        # A troop row's wounded icon persists as long as ANY of that type
+        # remains wounded, even while a batch of the SAME type is already
+        # mid-heal (locked, no editable stepper). The modal genuinely being
+        # open (Heal button present) but having no steppers is expected,
+        # not a failure needing Escape-based recovery.
+        with patch.object(HL, "find_all_templates", return_value=[]), \
+             patch("lastz.vision.find_template", return_value=Match(1.0, 1.0, 0.9)):
             result = HL._set_batch_size(50)
 
         self.assertFalse(result)
