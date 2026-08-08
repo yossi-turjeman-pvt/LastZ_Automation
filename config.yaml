@@ -45,6 +45,8 @@ thresholds:
                                # true-negative noise sits ~0.48-0.53, so 0.58
                                # keeps margin on both sides)
   healing_heal_button: 0.75    # Big "Heal" button in modal
+  healing_modal_title: 0.85    # "Hospital" title - present regardless of
+                               # whether any row is currently editable
   healing_minus_button: 0.72   # "-" stepper on troop row (batch size entry)
   healing_plus_button: 0.75    # "+" stepper on troop row (batch size entry)
   quit_tips: 0.75              # Tips modal "Exit the game?" text

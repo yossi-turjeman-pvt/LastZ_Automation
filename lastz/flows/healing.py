@@ -48,15 +48,31 @@ def log(msg: str) -> None:
 
 def _safe_dismiss_modal() -> None:
     """
-    Close the Hospital modal via Escape, then verify it didn't trigger the
-    game's Quit-game confirmation ("Quit Tips") - a real live incident
-    (2026-08-09): Escape on a screen with no actual overlay open can bring
-    up that dialog, and a second bare Escape does NOT dismiss it (only
-    clicking Cancel does - see lastz/flows/base.py's
-    dismiss_quit_tips_if_present(), already relied on by reset_ui() for
-    this exact reason). Left unguarded, a later cycle's blind Escape could
-    just sit there doing nothing while the confirmation lingers on screen.
+    Close the Hospital modal via Escape - but ONLY if it's actually open.
+
+    Real live incident (2026-08-09): the wounded-troops HUD icon (and so
+    this abort path) stays active for the ENTIRE remaining duration of a
+    heal whenever any of that troop type is still wounded - which is most
+    of the time, since a batch only heals up to batch_size at once. Every
+    ~5s poll during that whole window was blindly pressing Escape once
+    _set_batch_size found no editable row, and Escape on a screen with no
+    actual overlay open can trigger the game's Quit-game confirmation - a
+    second bare Escape does NOT dismiss that dialog (only clicking Cancel
+    does), so this was firing over and over for as long as the heal ran,
+    not just once. Checking healing_modal_title.png first (the "Hospital"
+    title - present regardless of whether any row is currently editable)
+    means Escape is only ever pressed when there's a real overlay to
+    dismiss, eliminating the risk instead of just cleaning up after it.
     """
+    from lastz.vision import find_template
+
+    screen = capture()
+    ensure_template_scale(screen)
+    thr_title = cfg_threshold("healing_modal_title")
+    if find_template(screen, "healing_modal_title.png", thr_title) is None:
+        log("[Healing] Modal isn't actually open, nothing to dismiss")
+        return
+
     from lastz.flows.base import dismiss_quit_tips_if_present
 
     press_escape()
@@ -269,13 +285,16 @@ def _set_batch_size(batch_size: int) -> bool:
             # already mid-heal (locked, no editable stepper - just a
             # timer). Reopening the modal in that state is expected and
             # benign, not a failure: the Hospital modal itself is genuinely
-            # open (confirmed via the Heal button), there's just nothing
-            # editable to set right now. Only log/treat this as a real
-            # error if the modal doesn't appear to have opened at all.
+            # open (confirmed via the "Hospital" title, present regardless
+            # of row-lock state - the Heal button itself turned out to be
+            # unreliable for this check, still absent in some genuinely-
+            # open, all-rows-locked states), there's just nothing editable
+            # to set right now. Only log/treat this as a real error if the
+            # modal doesn't appear to have opened at all.
             from lastz.vision import find_template
 
-            thr_heal = cfg_threshold("healing_heal_button")
-            if find_template(screen, "healing_heal_button.png", thr_heal) is not None:
+            thr_title = cfg_threshold("healing_modal_title")
+            if find_template(screen, "healing_modal_title.png", thr_title) is not None:
                 log("[Healing] No editable troop row right now (already healing) — nothing to do this cycle")
             else:
                 log("[Healing] ERROR: Could not find +/- steppers in modal")

@@ -68,6 +68,13 @@ class HealingTestBase(unittest.TestCase):
         self.dismiss_quit_tips = quit_tips_patcher.start()
         self.addCleanup(quit_tips_patcher.stop)
 
+        # Default: modal considered open (healing_modal_title.png matches).
+        # Tests specifically covering "modal isn't actually open" override
+        # this to return None.
+        find_template_patcher = patch("lastz.vision.find_template", return_value=Match(1.0, 1.0, 0.9))
+        self.find_template = find_template_patcher.start()
+        self.addCleanup(find_template_patcher.stop)
+
 
 class TestAbortOnBatchSizeFailure(HealingTestBase):
     """Finding 1: never click Heal with an unverified/failed batch size."""
@@ -86,11 +93,10 @@ class TestAbortOnBatchSizeFailure(HealingTestBase):
 
         self.assertFalse(result)
 
-    def test_dismiss_checks_for_quit_confirmation(self):
-        # Real incident (2026-08-09): a bare press_escape() on a screen with
-        # no actual overlay open can trigger the game's Quit-game
-        # confirmation, and a second bare Escape does NOT dismiss it (only
-        # clicking Cancel does). _safe_dismiss_modal must always check.
+    def test_dismiss_presses_escape_and_checks_quit_confirmation_when_modal_open(self):
+        # find_template mocked to return a match by default (setUp) =
+        # healing_modal_title.png found = modal genuinely open = safe to
+        # press Escape.
         HL._safe_dismiss_modal()
 
         HL.press_escape.assert_called_once()
@@ -103,6 +109,19 @@ class TestAbortOnBatchSizeFailure(HealingTestBase):
         self.assertTrue(
             any("Quit-game confirmation" in call.args[0] for call in mock_log.call_args_list)
         )
+
+    def test_dismiss_skips_escape_when_modal_not_actually_open(self):
+        # The actual bug (2026-08-09 live incident): the wounded-troops icon
+        # stays active for the whole remaining duration of a heal (some of
+        # that type is still wounded), so this abort path re-fired every
+        # ~5s poll for as long as the heal ran. Escape on a screen with
+        # nothing open triggers the game's Quit-game confirmation - it must
+        # never fire when there's nothing to dismiss.
+        self.find_template.return_value = None
+        HL._safe_dismiss_modal()
+
+        HL.press_escape.assert_not_called()
+        self.dismiss_quit_tips.assert_not_called()
 
     def test_no_editable_row_is_benign_not_an_error(self):
         # A troop row's wounded icon persists as long as ANY of that type
