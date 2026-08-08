@@ -83,7 +83,7 @@ class TestZeroOutStepper(HealingTestBase):
 
     def test_verifies_zero_after_first_round(self):
         plus = _bbox(200, 100)
-        with patch.object(HL, "tesseract_available", return_value=True), \
+        with patch.object(HL, "digit_templates_available", return_value=True), \
              patch.object(HL, "read_stepper_number", return_value=0):
             result = HL._zero_out_stepper(50.0, 100.0, plus, batch_size=50)
 
@@ -94,7 +94,7 @@ class TestZeroOutStepper(HealingTestBase):
 
     def test_retries_then_verifies_zero(self):
         plus = _bbox(200, 100)
-        with patch.object(HL, "tesseract_available", return_value=True), \
+        with patch.object(HL, "digit_templates_available", return_value=True), \
              patch.object(HL, "read_stepper_number", side_effect=[12, 3, 0]):
             result = HL._zero_out_stepper(50.0, 100.0, plus, batch_size=50)
 
@@ -104,7 +104,7 @@ class TestZeroOutStepper(HealingTestBase):
 
     def test_aborts_when_never_reaches_zero(self):
         plus = _bbox(200, 100)
-        with patch.object(HL, "tesseract_available", return_value=True), \
+        with patch.object(HL, "digit_templates_available", return_value=True), \
              patch.object(HL, "read_stepper_number", return_value=7):
             result = HL._zero_out_stepper(50.0, 100.0, plus, batch_size=50)
 
@@ -112,9 +112,9 @@ class TestZeroOutStepper(HealingTestBase):
         # Initial burst + exactly _ZERO_VERIFY_ROUNDS retry rounds, never more.
         self.assertEqual(HL.rapid_click.call_count, 1 + HL._ZERO_VERIFY_ROUNDS)
 
-    def test_aborts_when_tesseract_unavailable(self):
+    def test_aborts_when_digit_templates_unavailable(self):
         plus = _bbox(200, 100)
-        with patch.object(HL, "tesseract_available", return_value=False):
+        with patch.object(HL, "digit_templates_available", return_value=False):
             result = HL._zero_out_stepper(50.0, 100.0, plus, batch_size=50)
 
         self.assertFalse(result)
@@ -161,6 +161,21 @@ class TestSetToTargetVerified(HealingTestBase):
             result = HL._set_to_target_verified(50.0, 100.0, plus, batch_size=50)
 
         self.assertFalse(result)
+
+    def test_accepts_row_cap_instead_of_looping_forever(self):
+        # Real incident (2026-08-09): the topmost row (Destroyer) had only
+        # 12 wounded while other rows below had hundreds - "+" clicks can't
+        # push it past 12 no matter how many more are sent. Two consecutive
+        # identical reads (12, 12) must be recognized as the row's real cap
+        # and accepted, not treated as "still climbing toward 50".
+        plus = _bbox(200, 100)
+        with patch.object(HL, "read_stepper_number", side_effect=[12, 12]):
+            result = HL._set_to_target_verified(50.0, 100.0, plus, batch_size=50)
+
+        self.assertTrue(result)
+        # Initial burst + one top-up attempt that proved futile - then stop,
+        # not the full _SET_VERIFY_ROUNDS budget.
+        self.assertEqual(HL.rapid_click.call_count, 2)
 
 
 class TestCheckAndHealOnceSuccessPath(HealingTestBase):
