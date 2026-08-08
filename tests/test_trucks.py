@@ -20,6 +20,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import cv2
 import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -113,6 +114,50 @@ class TestTrucksHiddenTopRow(unittest.TestCase):
         ]
         T._maybe_learn_top_row_yf(bogus, (_H, _W))
         self.assertEqual(T._load_top_row_yf((_H, _W)), T._DEFAULT_TOP_ROW_YF)
+
+
+class TestTruckColorGrayWithOrangeDecoration(unittest.TestCase):
+    """
+    Regression test for the 2026-08-08 gray-truck-with-orange-decoration
+    fix (commit b952817): a gray truck body with orange cargo/decorations
+    had 2907 orange pixels and was misclassified as "orange" because the
+    old code never checked whether gray/white dominated the ROI. Fixed by
+    adding a gray/white mask and vetoing "orange" when it dominates (see
+    _sample_picker_color's docstring/comments in lastz/flows/trucks.py).
+    """
+
+    _REAL_FIXTURE = (
+        Path(__file__).resolve().parent.parent
+        / "logs/debug/trucks/color/20260808_051243_832546_r0_initial_orange_frame.png"
+    )
+
+    def test_real_gray_truck_capture_not_classified_orange(self):
+        # Real capture from today's testing session (gitignored debug
+        # output, so only present locally) - a gray-bodied truck. Confirms
+        # the current (fixed) code correctly rejects it as "other".
+        if not self._REAL_FIXTURE.exists():
+            self.skipTest("Real debug capture not present locally (gitignored)")
+        color = cv2.imread(str(self._REAL_FIXTURE))
+        sample = T._sample_picker_color(color)
+        self.assertEqual(sample.kind, "other")
+
+    def test_synthetic_gray_body_with_orange_decoration_not_orange(self):
+        # Always runs, independent of the gitignored real capture: builds an
+        # image whose picker ROI is gray/white dominant (low saturation)
+        # with a small orange patch sized to reproduce the documented
+        # incident's ~2907 orange pixel count.
+        h, w = 1000, 2000
+        img = np.zeros((h, w, 3), dtype=np.uint8)
+        img[:] = (200, 200, 200)  # low-saturation gray truck body
+
+        y0, y1, x0, x1 = T._picker_roi_box(h, w)
+        orange_bgr = cv2.cvtColor(np.uint8([[[16, 200, 200]]]), cv2.COLOR_HSV2BGR)[0][0].tolist()
+        py0, px0 = y0 + 20, x0 + 20
+        img[py0 : py0 + 54, px0 : px0 + 54] = orange_bgr  # ~2916 orange px
+
+        sample = T._sample_picker_color(img)
+        self.assertEqual(sample.kind, "other")
+        self.assertGreater(sample.orange_px, 2000)  # confirms it's not just "too few px to matter"
 
 
 if __name__ == "__main__":
