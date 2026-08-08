@@ -47,7 +47,9 @@ healing:
 thresholds:
   healing_wounded: 0.72
   healing_ask_help: 0.72
-  healing_complete: 0.72
+  healing_complete: 0.58        # lower than the others - the icon has a
+                                # pulsing "done" animation that live-observed
+                                # dips genuine matches to ~0.65
   healing_heal_button: 0.75
   healing_minus_button: 0.72
   healing_plus_button: 0.75

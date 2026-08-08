@@ -206,7 +206,7 @@ All of these live in [`config.yaml`](config.yaml). Restart / re-run the menu aft
 | `healing.icon_band` | `[0.75, 1.0, 0.0, 0.20]` | Left-bottom HUD search area as fractions of game window `(yf0, yf1, xf0, xf1)` |
 | `thresholds.healing_wounded` | `0.72` | Bandage icon (troops need healing) |
 | `thresholds.healing_ask_help` | `0.72` | Ask alliance to speed up healing |
-| `thresholds.healing_complete` | `0.72` | Healing done, collect troops (checked against every `healing_complete*.png` variant) |
+| `thresholds.healing_complete` | `0.58` | Healing done, collect troops (checked against every `healing_complete*.png` variant). Lower than the others - the icon has a pulsing "done" animation that live-observed dips genuine matches to ~0.65 |
 | `thresholds.healing_heal_button` | `0.75` | Big "Heal" button in modal |
 | `thresholds.healing_minus_button` | `0.72` | "-" stepper on troop row (batch size entry) |
 | `thresholds.healing_plus_button` | `0.75` | "+" stepper on troop row (batch size entry) |

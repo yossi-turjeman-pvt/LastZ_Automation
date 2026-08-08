@@ -39,7 +39,11 @@ thresholds:
   help_button: 0.75
   healing_wounded: 0.72        # Bandage icon (troops need healing)
   healing_ask_help: 0.72       # Ask alliance to speed up healing
-  healing_complete: 0.72       # Healing done, collect troops
+  healing_complete: 0.58       # Healing done, collect troops (icon has a
+                               # pulsing "done" badge/animation live-observed
+                               # dipping genuine matches to ~0.65 - confirmed
+                               # true-negative noise sits ~0.48-0.53, so 0.58
+                               # keeps margin on both sides)
   healing_heal_button: 0.75    # Big "Heal" button in modal
   healing_minus_button: 0.72   # "-" stepper on troop row (batch size entry)
   healing_plus_button: 0.75    # "+" stepper on troop row (batch size entry)
