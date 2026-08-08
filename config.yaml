@@ -41,6 +41,8 @@ thresholds:
   healing_ask_help: 0.72       # Ask alliance to speed up healing
   healing_complete: 0.72       # Healing done, collect troops
   healing_heal_button: 0.75    # Big "Heal" button in modal
+  healing_minus_button: 0.72   # "-" stepper on troop row (batch size entry)
+  healing_plus_button: 0.75    # "+" stepper on troop row (batch size entry)
   quit_tips: 0.75              # Tips modal "Exit the game?" text
   quit_cancel: 0.75            # blue Cancel on Quit Tips (not the tiny X)
   heli_br_icon: 0.70

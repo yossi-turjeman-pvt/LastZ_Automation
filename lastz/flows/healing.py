@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from lastz.config import healing_cfg, logs_dir, threshold as cfg_threshold
-from lastz.input import click
+from lastz.input import click, rapid_click
 from lastz.screen import (
     capture,
     capture_region,
@@ -20,7 +20,11 @@ from lastz.screen import (
     game_window_band_phys,
     physical_to_logical,
 )
-from lastz.vision import ensure_template_scale, find_template_local
+from lastz.vision import ensure_template_scale, find_all_templates, find_template_local
+
+# Comfortably above any batch_size we'd configure, so rapid-decrementing this
+# many times always bottoms the stepper out at 0 regardless of leftover value.
+_ZERO_OUT_CLICKS = 300
 
 
 def _log_path() -> Path:
@@ -91,6 +95,44 @@ def _find_healing_icon(icon_name: str, band: list[float], thr: float, debug: boo
             return None
 
 
+def _set_batch_size(batch_size: int) -> bool:
+    """
+    Set the quantity stepper on the topmost troop row in the open Hospital
+    modal to exactly `batch_size`, using the +/- buttons (the field itself
+    is not a native text input, so typing/paste doesn't work).
+    """
+    try:
+        screen = capture()
+        ensure_template_scale(screen)
+        thr_minus = cfg_threshold("healing_minus_button")
+        thr_plus = cfg_threshold("healing_plus_button")
+
+        minus_matches = find_all_templates(screen, "healing_minus_button.png", thr_minus)
+        plus_matches = find_all_templates(screen, "healing_plus_button.png", thr_plus)
+        if not minus_matches or not plus_matches:
+            log("[Healing] ERROR: Could not find +/- steppers in modal")
+            return False
+
+        # Topmost row = first troop type listed.
+        minus = min(minus_matches, key=lambda m: m.phys_y)
+        plus = min(plus_matches, key=lambda m: m.phys_y)
+
+        mx, my = physical_to_logical(minus.phys_x, minus.phys_y)
+        px, py = physical_to_logical(plus.phys_x, plus.phys_y)
+
+        log(f"[Healing] Zeroing batch quantity (conf minus={minus.confidence:.2f})...")
+        rapid_click(mx, my, count=_ZERO_OUT_CLICKS, interval=0.02)
+        time.sleep(0.3)
+
+        log(f"[Healing] Setting batch quantity to {batch_size} (conf plus={plus.confidence:.2f})...")
+        rapid_click(px, py, count=batch_size, interval=0.02)
+        time.sleep(0.3)
+        return True
+    except Exception as e:
+        log(f"[Healing] ERROR setting batch size: {e}")
+        return False
+
+
 def check_and_heal_once(band: list[float], batch_size: int, debug: bool = False) -> bool:
     """
     Check for wounded troops and perform one healing cycle if needed.
@@ -114,11 +156,13 @@ def check_and_heal_once(band: list[float], batch_size: int, debug: bool = False)
     click(pos[0], pos[1])
     time.sleep(1.5)
 
-    # TODO: Step 3: Set batch size to configured value
-    # This requires clicking on the number field and typing the value
-    # For now, we'll assume the default/previous value is acceptable
-    # Will implement number field clicking in next iteration
-    log(f"[Healing] NOTE: Using existing batch size value (auto-entry not implemented yet)")
+    # Step 3: Set batch size on the first (topmost) troop row.
+    # The quantity field itself doesn't accept keyboard/paste input (it's a
+    # game-rendered widget, not a native text field) - only the +/- steppers
+    # work. Zero the stepper out (clamps at 0, so overshooting is safe) then
+    # click "+" exactly batch_size times for a deterministic result.
+    if not _set_batch_size(batch_size):
+        log("[Healing] WARN: Could not set batch size, using existing modal value")
 
     # Step 4: Find and click the "Heal" button
     # The Heal button should be visible in the modal (full screen search)
