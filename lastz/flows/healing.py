@@ -37,13 +37,16 @@ def log(msg: str) -> None:
         f.write(line + "\n")
 
 
-def _find_healing_icon(icon_name: str, band: list[float], thr: float) -> tuple[float, float] | None:
+def _find_healing_icon(icon_name: str, band: list[float], thr: float, debug: bool = False) -> tuple[float, float] | None:
     """
     Search for healing icon in the specified band.
 
     Returns (logical_x, logical_y) if found, None otherwise.
     Uses region capture with fallback to full capture + crop.
     """
+    if debug:
+        log(f"Searching for '{icon_name}' in band {band} (threshold={thr:.2f})")
+
     try:
         lx, ly, lw, lh = game_window_band_logical(band)
         region = capture_region(lx, ly, lw, lh)
@@ -52,28 +55,43 @@ def _find_healing_icon(icon_name: str, band: list[float], thr: float) -> tuple[f
             ih, iw = region.shape[:2]
             click_x = lx + (match.phys_x / max(iw, 1)) * lw
             click_y = ly + (match.phys_y / max(ih, 1)) * lh
+            if debug:
+                log(f"  Found '{icon_name}' conf={match.confidence:.4f} at ({click_x:.0f}, {click_y:.0f})")
             return (click_x, click_y)
+        if debug:
+            log(f"  '{icon_name}' not found (region capture)")
         return None
-    except Exception:
+    except Exception as region_err:
         # Fallback: full capture + crop
         try:
+            if debug:
+                log(f"  Region capture failed: {region_err}, trying full+crop")
             screen = capture()
             ensure_template_scale(screen)
             ox, oy, rw, rh = game_window_band_phys(band)
             crop = screen[oy : oy + rh, ox : ox + rw]
             if crop.size == 0:
+                if debug:
+                    log(f"  Empty crop, aborting")
                 return None
             match = find_template_local(
                 crop, icon_name, thr, origin_x=ox, origin_y=oy
             )
             if match is None:
+                if debug:
+                    log(f"  '{icon_name}' not found (full+crop)")
                 return None
-            return physical_to_logical(match.phys_x, match.phys_y)
-        except Exception:
+            pos = physical_to_logical(match.phys_x, match.phys_y)
+            if debug:
+                log(f"  Found '{icon_name}' conf={match.confidence:.4f} at ({pos[0]:.0f}, {pos[1]:.0f})")
+            return pos
+        except Exception as full_err:
+            if debug:
+                log(f"  Full+crop also failed: {full_err}")
             return None
 
 
-def check_and_heal_once(band: list[float], batch_size: int) -> bool:
+def check_and_heal_once(band: list[float], batch_size: int, debug: bool = False) -> bool:
     """
     Check for wounded troops and perform one healing cycle if needed.
 
@@ -81,14 +99,18 @@ def check_and_heal_once(band: list[float], batch_size: int) -> bool:
     Returns False if no wounded troops or healing failed.
     """
     # Step 1: Check for wounded troops icon
+    log(f"[Healing] Checking for wounded troops (batch_size={batch_size})...")
     thr_wounded = cfg_threshold("healing_wounded")
-    pos = _find_healing_icon("healing_wounded.png", band, thr_wounded)
+    pos = _find_healing_icon("healing_wounded.png", band, thr_wounded, debug=True)
     if pos is None:
+        if debug:
+            log("[Healing] No wounded troops detected")
         return False
 
-    log(f"Wounded troops detected at ({pos[0]:.0f}, {pos[1]:.0f})")
+    log(f"[Healing] ✓ Wounded troops detected at ({pos[0]:.0f}, {pos[1]:.0f})")
 
     # Step 2: Click to open healing modal
+    log(f"[Healing] Opening healing modal...")
     click(pos[0], pos[1])
     time.sleep(1.5)
 
@@ -96,9 +118,11 @@ def check_and_heal_once(band: list[float], batch_size: int) -> bool:
     # This requires clicking on the number field and typing the value
     # For now, we'll assume the default/previous value is acceptable
     # Will implement number field clicking in next iteration
+    log(f"[Healing] NOTE: Using existing batch size value (auto-entry not implemented yet)")
 
     # Step 4: Find and click the "Heal" button
     # The Heal button should be visible in the modal (full screen search)
+    log(f"[Healing] Searching for Heal button in modal...")
     thr_heal = cfg_threshold("healing_heal_button")
     try:
         screen = capture()
@@ -107,53 +131,58 @@ def check_and_heal_once(band: list[float], batch_size: int) -> bool:
         from lastz.vision import find_template
         heal_match = find_template(screen, "healing_heal_button.png", thr_heal)
         if heal_match is None:
-            log("WARN: Heal button not found in modal")
-            # TODO: Press Escape to close modal?
+            log("[Healing] ERROR: Heal button not found in modal - template missing or threshold too high?")
+            log("[Healing] Modal may be open - press Escape manually")
             return False
 
         hx, hy = physical_to_logical(heal_match.phys_x, heal_match.phys_y)
-        log(f"Clicking Heal button at ({hx:.0f}, {hy:.0f})")
+        log(f"[Healing] ✓ Heal button found (conf={heal_match.confidence:.4f}), clicking at ({hx:.0f}, {hy:.0f})")
         click(hx, hy)
         time.sleep(2.0)
 
     except Exception as e:
-        log(f"ERROR clicking Heal button: {e}")
+        log(f"[Healing] ERROR clicking Heal button: {e}")
         return False
 
     # Step 5: Modal should close, now check for "Ask Alliance Help" icon
+    log(f"[Healing] Checking for Ask Alliance Help icon...")
     thr_ask = cfg_threshold("healing_ask_help")
-    pos_ask = _find_healing_icon("healing_ask_help.png", band, thr_ask)
+    pos_ask = _find_healing_icon("healing_ask_help.png", band, thr_ask, debug=True)
     if pos_ask is not None:
-        log(f"Asking alliance help at ({pos_ask[0]:.0f}, {pos_ask[1]:.0f})")
+        log(f"[Healing] ✓ Asking alliance help at ({pos_ask[0]:.0f}, {pos_ask[1]:.0f})")
         click(pos_ask[0], pos_ask[1])
         time.sleep(1.0)
-        log("Healing started, will collect when done")
+        log("[Healing] SUCCESS: Healing started, will collect when done")
         return True
     else:
         # Check if healing failed (no resources?)
         # If the wounded icon is still there, healing likely failed
-        pos_still_wounded = _find_healing_icon("healing_wounded.png", band, thr_wounded)
+        log("[Healing] Ask help icon not found, checking if healing failed...")
+        pos_still_wounded = _find_healing_icon("healing_wounded.png", band, thr_wounded, debug=True)
         if pos_still_wounded is not None:
-            log("WARN: Healing failed (possibly not enough resources)")
+            log("[Healing] ERROR: Healing failed - wounded icon still present (likely not enough resources)")
             return False
         else:
             # Icon changed but not to ask_help - maybe healing instant?
-            log("Healing may have started (no ask_help icon found)")
+            log("[Healing] WARN: Icon changed but ask_help not found - healing may have started (or instant heal?)")
             return True
 
 
-def check_and_collect_healing(band: list[float]) -> bool:
+def check_and_collect_healing(band: list[float], debug: bool = False) -> bool:
     """
     Check if healing is complete and collect healed troops.
 
     Returns True if healing was collected.
     """
     thr_complete = cfg_threshold("healing_complete")
-    pos = _find_healing_icon("healing_complete.png", band, thr_complete)
+    pos = _find_healing_icon("healing_complete.png", band, thr_complete, debug=debug)
     if pos is None:
+        if debug:
+            log("[Healing] No completed healing to collect")
         return False
 
-    log(f"Healing complete! Collecting at ({pos[0]:.0f}, {pos[1]:.0f})")
+    log(f"[Healing] ✓✓✓ Healing complete! Collecting at ({pos[0]:.0f}, {pos[1]:.0f})")
     click(pos[0], pos[1])
     time.sleep(1.5)
+    log("[Healing] Troops collected, checking for more wounded...")
     return True

@@ -106,6 +106,7 @@ def run_help_watcher_loop() -> None:
     healing_batch_size = heal_cfg["batch_size"]
     healing_check_interval = heal_cfg["check_interval_sec"]
     last_healing_check = 0.0
+    healing_checks_count = 0
 
     log("=" * 60)
     log("      LASTZ HELP WATCHER STARTED")
@@ -140,21 +141,30 @@ def run_help_watcher_loop() -> None:
             now = time.time()
             if healing_enabled and (now - last_healing_check) >= healing_check_interval:
                 last_healing_check = now
+                healing_checks_count += 1
+
+                # Periodic heartbeat log (every ~60s)
+                if healing_checks_count % 12 == 1:  # 12 checks * 5s = 60s
+                    log(f"[Help] Healing monitor active (check #{healing_checks_count})")
+
                 try:
                     from lastz.flows.healing import check_and_collect_healing, check_and_heal_once
 
                     # First check if healing is complete (collect priority)
-                    if check_and_collect_healing(healing_band):
+                    if check_and_collect_healing(healing_band, debug=False):
                         # Healing collected, loop again immediately to check for more wounded
+                        log("[Help] Healing collected, rechecking for more wounded troops")
                         continue
 
                     # Then check if we need to start new healing
-                    if check_and_heal_once(healing_band, healing_batch_size):
+                    if check_and_heal_once(healing_band, healing_batch_size, debug=False):
                         # Healing started, continue to help polling
-                        pass
+                        log("[Help] Healing cycle started, resuming help polling")
 
                 except Exception as heal_err:
-                    log(f"Healing check failed: {heal_err}")
+                    log(f"[Help] Healing check failed: {heal_err}")
+                    import traceback
+                    log(f"[Help] Traceback: {traceback.format_exc()}")
 
             # Continue help polling
             _poll_once(band, thr)
