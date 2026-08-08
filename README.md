@@ -196,6 +196,21 @@ All of these live in [`config.yaml`](config.yaml). Restart / re-run the menu aft
 | `help_watcher.band` | `[0.50, 1.0, 0.75, 1.0]` | Search band as fractions of game window `(yf0, yf1, xf0, xf1)` — default bottom-right 1/8 |
 | `thresholds.help_button` | `0.75` | Handshake Help icon match threshold |
 
+### Healing
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `healing.enabled` | `true` | `false` = skip healing entirely |
+| `healing.batch_size` | `50` | Total troops to heal per batch (not per type) |
+| `healing.check_interval_sec` | `5.0` | How often to check for healing icons (slower than help poll) |
+| `healing.icon_band` | `[0.75, 1.0, 0.0, 0.20]` | Left-bottom HUD search area as fractions of game window `(yf0, yf1, xf0, xf1)` |
+| `thresholds.healing_wounded` | `0.72` | Bandage icon (troops need healing) |
+| `thresholds.healing_ask_help` | `0.72` | Ask alliance to speed up healing |
+| `thresholds.healing_complete` | `0.72` | Healing done, collect troops (checked against every `healing_complete*.png` variant) |
+| `thresholds.healing_heal_button` | `0.75` | Big "Heal" button in modal |
+| `thresholds.healing_minus_button` | `0.72` | "-" stepper on troop row (batch size entry) |
+| `thresholds.healing_plus_button` | `0.75` | "+" stepper on troop row (batch size entry) |
+
 ### HQ Drone Gift
 
 | Flag | Default | Purpose |
