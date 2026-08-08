@@ -125,3 +125,17 @@ def help_watcher_cfg() -> dict:
         "poll_sec": float(cfg.get("poll_sec", 0.05)),
         "band": [float(band[0]), float(band[1]), float(band[2]), float(band[3])],
     }
+
+
+def healing_cfg() -> dict:
+    """Healing flow config (runs in parallel with Help watcher)."""
+    cfg = load_config().get("healing") or {}
+    icon_band = cfg.get("icon_band") or [0.75, 1.0, 0.0, 0.20]
+    if len(icon_band) < 4:
+        icon_band = [0.75, 1.0, 0.0, 0.20]
+    return {
+        "enabled": bool(cfg.get("enabled", True)),
+        "batch_size": int(cfg.get("batch_size", 50)),
+        "check_interval_sec": float(cfg.get("check_interval_sec", 5.0)),
+        "icon_band": [float(icon_band[0]), float(icon_band[1]), float(icon_band[2]), float(icon_band[3])],
+    }

@@ -37,6 +37,10 @@ thresholds:
   trucks_go: 0.70
   trucks_details_back: 0.70
   help_button: 0.75
+  healing_wounded: 0.72        # Bandage icon (troops need healing)
+  healing_ask_help: 0.72       # Ask alliance to speed up healing
+  healing_complete: 0.72       # Healing done, collect troops
+  healing_heal_button: 0.75    # Big "Heal" button in modal
   quit_tips: 0.75              # Tips modal "Exit the game?" text
   quit_cancel: 0.75            # blue Cancel on Quit Tips (not the tiny X)
   heli_br_icon: 0.70
@@ -77,6 +81,14 @@ help_watcher:
   poll_sec: 0.05               # lower = faster, more CPU
   # bottom-right 1/8 of game window (yf0, yf1, xf0, xf1)
   band: [0.50, 1.0, 0.75, 1.0]
+
+# Healing (runs in parallel with Help watcher, prioritized)
+healing:
+  enabled: true                # false = skip healing entirely
+  batch_size: 50               # total troops to heal per batch (not per type)
+  check_interval_sec: 5.0      # how often to check for healing icons (slower than help poll)
+  # Left-bottom HUD area for healing icons (yf0, yf1, xf0, xf1)
+  icon_band: [0.75, 1.0, 0.0, 0.20]
 
 drone_gift:
   min_duration: "08:00:00"     # collect only when Exploration Duration >= this
