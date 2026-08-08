@@ -11,7 +11,7 @@ import datetime
 import time
 from pathlib import Path
 
-from lastz.config import healing_cfg, logs_dir, threshold as cfg_threshold
+from lastz.config import healing_cfg, logs_dir, templates_dir, threshold as cfg_threshold
 from lastz.input import click, rapid_click
 from lastz.screen import (
     capture,
@@ -212,6 +212,16 @@ def check_and_heal_once(band: list[float], batch_size: int, debug: bool = False)
             return True
 
 
+def _complete_icon_names() -> list[str]:
+    """
+    Each troop type shows its own portrait as the "healing done" HUD icon
+    (same slot, different picture per type - e.g. healing_complete.png,
+    healing_complete_2.png, healing_complete_3.png, ...). Check every
+    captured variant rather than a single hardcoded name.
+    """
+    return sorted(p.name for p in templates_dir().glob("healing_complete*.png"))
+
+
 def check_and_collect_healing(band: list[float], debug: bool = False) -> bool:
     """
     Check if healing is complete and collect healed troops.
@@ -219,7 +229,11 @@ def check_and_collect_healing(band: list[float], debug: bool = False) -> bool:
     Returns True if healing was collected.
     """
     thr_complete = cfg_threshold("healing_complete")
-    pos = _find_healing_icon("healing_complete.png", band, thr_complete, debug=debug)
+    pos = None
+    for icon_name in _complete_icon_names():
+        pos = _find_healing_icon(icon_name, band, thr_complete, debug=debug)
+        if pos is not None:
+            break
     if pos is None:
         if debug:
             log("[Healing] No completed healing to collect")
