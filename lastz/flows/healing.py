@@ -12,7 +12,8 @@ import time
 from pathlib import Path
 
 from lastz.config import healing_cfg, logs_dir, templates_dir, threshold as cfg_threshold
-from lastz.input import click, rapid_click
+from lastz.input import click, press_escape, rapid_click
+from lastz.ocr import read_stepper_number, tesseract_available
 from lastz.screen import (
     capture,
     capture_region,
@@ -20,11 +21,14 @@ from lastz.screen import (
     game_window_band_phys,
     physical_to_logical,
 )
-from lastz.vision import ensure_template_scale, find_all_templates, find_template_local
+from lastz.vision import MatchWithBBox, ensure_template_scale, find_all_templates, find_template_local
 
-# Comfortably above any batch_size we'd configure, so rapid-decrementing this
-# many times always bottoms the stepper out at 0 regardless of leftover value.
-_ZERO_OUT_CLICKS = 300
+# _zero_out_stepper: initial decrement burst covers the common case (observed
+# leftover values sit close to batch_size, e.g. 50-51) without ever guessing;
+# followed by up to _ZERO_VERIFY_ROUNDS OCR-verified top-up rounds.
+_ZERO_MARGIN = 20
+_ZERO_ROUND_CLICKS = 80
+_ZERO_VERIFY_ROUNDS = 3
 
 
 def _log_path() -> Path:
@@ -95,6 +99,59 @@ def _find_healing_icon(icon_name: str, band: list[float], thr: float, debug: boo
             return None
 
 
+def _number_field_crop(plus: MatchWithBBox) -> tuple[int, int, int, int]:
+    """
+    The quantity number sits immediately right of the "+" button (modal
+    layout, left to right: [-] [slider] [+] [number]). Expressed relative
+    to the "+" match's own box (not fixed pixels) so it scales with
+    whatever size the template matched at.
+    """
+    num_x = int(plus.phys_x + plus.phys_w / 2 + plus.phys_w * 0.15)
+    num_w = int(plus.phys_w * 1.6)
+    num_y = int(plus.phys_y - plus.phys_h / 2)
+    num_h = int(plus.phys_h)
+    return num_x, num_y, num_w, num_h
+
+
+def _read_stepper_value(plus: MatchWithBBox) -> int | None:
+    screen = capture()
+    ensure_template_scale(screen)
+    x, y, w, h = _number_field_crop(plus)
+    return read_stepper_number(screen, x, y, w, h)
+
+
+def _zero_out_stepper(mx: float, my: float, plus: MatchWithBBox, batch_size: int) -> bool:
+    """
+    Decrement the "-" stepper to exactly 0, OCR-verifying rather than
+    trusting a blind click count. A fixed click count can't guarantee 0 if
+    the field's leftover value is larger than assumed (troop counts well
+    into the hundreds are common) - silently healing more than batch_size.
+    Returns False (caller must abort, never guess) if tesseract is
+    unavailable or the field never verifies at 0 within the retry budget.
+    """
+    if not tesseract_available():
+        log("[Healing] ERROR: tesseract unavailable — cannot verify batch size, aborting")
+        return False
+
+    # Initial burst: observed leftover values sit close to batch_size
+    # (e.g. 50-51), so this covers the common case in one shot; the
+    # verify-and-retry loop below handles anything larger.
+    rapid_click(mx, my, count=batch_size + _ZERO_MARGIN, interval=0.02)
+    time.sleep(0.3)
+
+    for round_i in range(_ZERO_VERIFY_ROUNDS):
+        value = _read_stepper_value(plus)
+        if value == 0:
+            log(f"[Healing] Verified batch quantity at 0 after round {round_i}")
+            return True
+        log(f"[Healing] Stepper read {value!r} after round {round_i}, retrying decrement")
+        rapid_click(mx, my, count=_ZERO_ROUND_CLICKS, interval=0.02)
+        time.sleep(0.3)
+
+    log("[Healing] ERROR: Could not verify batch quantity reached 0, aborting")
+    return False
+
+
 def _set_batch_size(batch_size: int) -> bool:
     """
     Set the quantity stepper on the topmost troop row in the open Hospital
@@ -121,8 +178,8 @@ def _set_batch_size(batch_size: int) -> bool:
         px, py = physical_to_logical(plus.phys_x, plus.phys_y)
 
         log(f"[Healing] Zeroing batch quantity (conf minus={minus.confidence:.2f})...")
-        rapid_click(mx, my, count=_ZERO_OUT_CLICKS, interval=0.02)
-        time.sleep(0.3)
+        if not _zero_out_stepper(mx, my, plus, batch_size):
+            return False
 
         log(f"[Healing] Setting batch quantity to {batch_size} (conf plus={plus.confidence:.2f})...")
         rapid_click(px, py, count=batch_size, interval=0.02)
@@ -162,7 +219,10 @@ def check_and_heal_once(band: list[float], batch_size: int, debug: bool = False)
     # work. Zero the stepper out (clamps at 0, so overshooting is safe) then
     # click "+" exactly batch_size times for a deterministic result.
     if not _set_batch_size(batch_size):
-        log("[Healing] WARN: Could not set batch size, using existing modal value")
+        log("[Healing] ABORT: Could not set batch size safely — closing modal, will retry next poll")
+        press_escape()
+        time.sleep(0.5)
+        return False
 
     # Step 4: Find and click the "Heal" button
     # The Heal button should be visible in the modal (full screen search)

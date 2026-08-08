@@ -155,6 +155,63 @@ def read_ui_text(
     return text
 
 
+def read_stepper_number(
+    screen: np.ndarray,
+    phys_x: int,
+    phys_y: int,
+    phys_w: int,
+    phys_h: int,
+) -> int | None:
+    """
+    OCR a small numeric stepper field (dark bold digits on a flat light-gray
+    background, e.g. the Hospital batch-quantity field). Different pixel
+    profile than read_ui_text()'s white-outlined-label case (that field's
+    background is itself bright gray, ~193/channel, which read_ui_text's
+    "white fill" threshold of 520 would wrongly classify as foreground) -
+    so this isolates dark digit pixels with a plain intensity threshold
+    instead of a brightness-sum white-text mask.
+
+    Returns the parsed integer, or None if tesseract is unavailable, the
+    crop is empty, or the OCR result isn't a clean integer.
+    """
+    if not _TESSERACT_AVAILABLE:
+        print("[ocr] pytesseract not installed — cannot read stepper number")
+        return None
+
+    h, w = screen.shape[:2]
+    x0 = max(0, phys_x)
+    y0 = max(0, phys_y)
+    x1 = min(w, phys_x + phys_w)
+    y1 = min(h, phys_y + phys_h)
+    crop = screen[y0:y1, x0:x1]
+    if crop.size == 0:
+        return None
+
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if len(crop.shape) == 3 else crop
+    # Digits are near-black; background is a flat mid-gray (~193). A fixed
+    # threshold well below the background level isolates dark fill/outline
+    # pixels without depending on the brightness-sum heuristic tuned for
+    # the opposite (white-text-on-dark) case elsewhere in this module.
+    _, mask = cv2.threshold(gray, 110, 255, cv2.THRESH_BINARY_INV)
+    scale = 4
+    enlarged = cv2.resize(
+        mask, (mask.shape[1] * scale, mask.shape[0] * scale), interpolation=cv2.INTER_NEAREST
+    )
+    enlarged = cv2.bitwise_not(enlarged)  # tesseract prefers dark text on light bg
+
+    try:
+        text = pytesseract.image_to_string(
+            enlarged, config="--psm 7 -c tessedit_char_whitelist=0123456789"
+        ).strip()
+    except Exception as exc:
+        print(f"[ocr] stepper number error: {exc}")
+        return None
+    print(f"[ocr] stepper number ({x0},{y0},{x1 - x0}x{y1 - y0}): {text!r}")
+    if not text.isdigit():
+        return None
+    return int(text)
+
+
 def read_duration_from_region(
     screen: np.ndarray,
     phys_x: int,
