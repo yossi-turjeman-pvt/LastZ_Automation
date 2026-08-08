@@ -78,6 +78,36 @@ class TestAbortOnBatchSizeFailure(HealingTestBase):
         self.assertFalse(result)
 
 
+class TestSetBatchSizeShortCircuit(HealingTestBase):
+    """
+    The game retains the field's last value across modal opens (observed
+    live: it repeatedly reopens already showing the previous batch_size) -
+    _set_batch_size should skip the whole zero-out/set-to-target click
+    cycle when the field already reads exactly batch_size.
+    """
+
+    def test_skips_clicking_when_already_at_target(self):
+        minus, plus = _bbox(100, 100), _bbox(200, 100)
+        with patch.object(HL, "find_all_templates", side_effect=lambda screen, name, thr: (
+            [minus] if "minus" in name else [plus]
+        )), patch.object(HL, "read_stepper_number", return_value=50):
+            result = HL._set_batch_size(50)
+
+        self.assertTrue(result)
+        HL.rapid_click.assert_not_called()
+
+    def test_still_clicks_when_not_already_at_target(self):
+        minus, plus = _bbox(100, 100), _bbox(200, 100)
+        with patch.object(HL, "find_all_templates", side_effect=lambda screen, name, thr: (
+            [minus] if "minus" in name else [plus]
+        )), patch.object(HL, "digit_templates_available", return_value=True), \
+             patch.object(HL, "read_stepper_number", return_value=0):
+            result = HL._set_batch_size(50)
+
+        self.assertTrue(result)
+        HL.rapid_click.assert_called()
+
+
 class TestZeroOutStepper(HealingTestBase):
     """Finding 2: OCR-verify the stepper actually reaches 0, bounded retries, abort if not."""
 

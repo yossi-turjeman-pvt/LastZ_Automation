@@ -255,6 +255,16 @@ def _set_batch_size(batch_size: int) -> bool:
         mx, my = physical_to_logical(minus.phys_x, minus.phys_y)
         px, py = physical_to_logical(plus.phys_x, plus.phys_y)
 
+        # The game retains the field's last value across modal opens (we've
+        # repeatedly seen it reopen already showing the previous batch_size),
+        # so zeroing-and-resetting unconditionally wastes a full click cycle
+        # (~8s) in the common steady-state case. Skip straight to Heal if
+        # it's already exactly right.
+        current = _read_stepper_value(plus)
+        if current == batch_size:
+            log(f"[Healing] Batch quantity already at {batch_size} (conf plus={plus.confidence:.2f}), skipping +/-")
+            return True
+
         log(f"[Healing] Zeroing batch quantity (conf minus={minus.confidence:.2f})...")
         if not _zero_out_stepper(mx, my, plus, batch_size):
             return False
