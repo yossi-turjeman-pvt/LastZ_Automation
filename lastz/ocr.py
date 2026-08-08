@@ -193,15 +193,36 @@ def read_stepper_number(
     # pixels without depending on the brightness-sum heuristic tuned for
     # the opposite (white-text-on-dark) case elsewhere in this module.
     _, mask = cv2.threshold(gray, 110, 255, cv2.THRESH_BINARY_INV)
+
+    # The field's text is right-aligned within a box wide enough for 3
+    # digits, so a short value (e.g. a single "0") only occupies a small
+    # corner of the raw crop - tesseract's line/word finder can lose it
+    # entirely in all the surrounding blank space. Crop tight to the actual
+    # dark-pixel bounding box first (confirmed live: this is what turned a
+    # correctly-detected "0" into an empty OCR read).
+    ys, xs = np.where(mask > 0)
+    if len(xs) == 0:
+        print(f"[ocr] stepper number ({x0},{y0},{x1 - x0}x{y1 - y0}): no dark pixels found")
+        return None
+    bbox_pad = 6
+    bx0 = max(0, int(xs.min()) - bbox_pad)
+    bx1 = min(mask.shape[1], int(xs.max()) + 1 + bbox_pad)
+    by0 = max(0, int(ys.min()) - bbox_pad)
+    by1 = min(mask.shape[0], int(ys.max()) + 1 + bbox_pad)
+    mask = mask[by0:by1, bx0:bx1]
+
     scale = 4
     enlarged = cv2.resize(
         mask, (mask.shape[1] * scale, mask.shape[0] * scale), interpolation=cv2.INTER_NEAREST
     )
     enlarged = cv2.bitwise_not(enlarged)  # tesseract prefers dark text on light bg
 
+    # --psm 8 (single word) handles an isolated digit block - including a
+    # single narrow digit - far more reliably than --psm 7 (single line),
+    # which expects text to span closer to the full image width.
     try:
         text = pytesseract.image_to_string(
-            enlarged, config="--psm 7 -c tessedit_char_whitelist=0123456789"
+            enlarged, config="--psm 8 -c tessedit_char_whitelist=0123456789"
         ).strip()
     except Exception as exc:
         print(f"[ocr] stepper number error: {exc}")

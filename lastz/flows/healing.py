@@ -29,6 +29,7 @@ from lastz.vision import MatchWithBBox, ensure_template_scale, find_all_template
 _ZERO_MARGIN = 20
 _ZERO_ROUND_CLICKS = 80
 _ZERO_VERIFY_ROUNDS = 3
+_SET_VERIFY_ROUNDS = 3
 
 
 def _log_path() -> Path:
@@ -152,6 +153,39 @@ def _zero_out_stepper(mx: float, my: float, plus: MatchWithBBox, batch_size: int
     return False
 
 
+def _set_to_target_verified(px: float, py: float, plus: MatchWithBBox, batch_size: int) -> bool:
+    """
+    Click "+" batch_size times, then OCR-verify the field actually landed on
+    batch_size - rapid_click's fast burst can drop clicks under load (a real
+    gap found live: an initial burst of exactly `batch_size` clicks landed
+    on batch_size - 3, not batch_size). Tops up the shortfall and re-verifies
+    rather than trusting the click count; aborts (never guesses) if it
+    overshoots or can't be confirmed within the retry budget.
+    """
+    rapid_click(px, py, count=batch_size, interval=0.02)
+    time.sleep(0.3)
+
+    for round_i in range(_SET_VERIFY_ROUNDS):
+        value = _read_stepper_value(plus)
+        if value == batch_size:
+            log(f"[Healing] Verified batch quantity at {batch_size} after round {round_i}")
+            return True
+        if value is None:
+            log(f"[Healing] WARN: could not OCR-read batch quantity (round {round_i}), retrying read")
+            time.sleep(0.3)
+            continue
+        if value > batch_size:
+            log(f"[Healing] ERROR: batch quantity {value} overshot target {batch_size}, aborting")
+            return False
+        missing = batch_size - value
+        log(f"[Healing] Batch quantity at {value}, topping up {missing} (round {round_i})")
+        rapid_click(px, py, count=missing, interval=0.02)
+        time.sleep(0.3)
+
+    log(f"[Healing] ERROR: Could not verify batch quantity reached {batch_size}, aborting")
+    return False
+
+
 def _set_batch_size(batch_size: int) -> bool:
     """
     Set the quantity stepper on the topmost troop row in the open Hospital
@@ -182,9 +216,7 @@ def _set_batch_size(batch_size: int) -> bool:
             return False
 
         log(f"[Healing] Setting batch quantity to {batch_size} (conf plus={plus.confidence:.2f})...")
-        rapid_click(px, py, count=batch_size, interval=0.02)
-        time.sleep(0.3)
-        return True
+        return _set_to_target_verified(px, py, plus, batch_size)
     except Exception as e:
         log(f"[Healing] ERROR setting batch size: {e}")
         return False

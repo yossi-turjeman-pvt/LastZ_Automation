@@ -121,6 +121,48 @@ class TestZeroOutStepper(HealingTestBase):
         HL.rapid_click.assert_not_called()
 
 
+class TestSetToTargetVerified(HealingTestBase):
+    """
+    _set_to_target_verified: rapid_click can drop clicks under a fast burst
+    (confirmed live: a batch_size=50 click burst landed on 47) - the final
+    "+" count must be OCR-verified and topped up, not trusted outright.
+    """
+
+    def test_verifies_target_after_first_burst(self):
+        plus = _bbox(200, 100)
+        with patch.object(HL, "read_stepper_number", return_value=50):
+            result = HL._set_to_target_verified(50.0, 100.0, plus, batch_size=50)
+
+        self.assertTrue(result)
+        # Just the initial burst - no top-up needed.
+        self.assertEqual(HL.rapid_click.call_count, 1)
+
+    def test_tops_up_shortfall_from_dropped_clicks(self):
+        plus = _bbox(200, 100)
+        with patch.object(HL, "read_stepper_number", side_effect=[47, 50]):
+            result = HL._set_to_target_verified(50.0, 100.0, plus, batch_size=50)
+
+        self.assertTrue(result)
+        self.assertEqual(HL.rapid_click.call_count, 2)
+        # Second call tops up exactly the shortfall (50 - 47 = 3).
+        _, kwargs = HL.rapid_click.call_args
+        self.assertEqual(kwargs.get("count"), 3)
+
+    def test_aborts_on_overshoot(self):
+        plus = _bbox(200, 100)
+        with patch.object(HL, "read_stepper_number", return_value=53):
+            result = HL._set_to_target_verified(50.0, 100.0, plus, batch_size=50)
+
+        self.assertFalse(result)
+
+    def test_aborts_when_never_verifiable(self):
+        plus = _bbox(200, 100)
+        with patch.object(HL, "read_stepper_number", return_value=None):
+            result = HL._set_to_target_verified(50.0, 100.0, plus, batch_size=50)
+
+        self.assertFalse(result)
+
+
 class TestCheckAndHealOnceSuccessPath(HealingTestBase):
     def test_full_success_path_returns_true(self):
         def fake_find_icon(icon_name, band, thr, debug=False):
