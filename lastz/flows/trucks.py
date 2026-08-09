@@ -606,12 +606,30 @@ def _is_wanted_color(kind: TruckColor, allow_purple: bool) -> bool:
 
 
 def _picker_roi_box(h: int, w: int) -> tuple[int, int, int, int]:
-    """Pixel box (y0,y1,x0,x1) used for picker color classification."""
+    """
+    Pixel box (y0,y1,x0,x1) used for picker color classification.
+
+    Fix 2026-08-09: the old box (yf=[0.10,0.36] xf=[0.32,0.68]) covered mostly
+    the dark smoke/cloud vignette behind the truck card, not the truck body —
+    on "epic" truck art (gold letter badge, dramatic smoke background) that
+    vignette is itself low-saturation gray, so it swamped the gray/white veto
+    below and caused two real orange trucks to be misclassified as "other"
+    and refreshed away overnight (2026-08-09 05:30 and 05:33, same truck art,
+    ~19 min apart — see logs/debug/trucks/color/20260809_0530.../053303...).
+    Narrowed to the cab area, which is where every truck's dominant body
+    paint is most solidly visible regardless of card art style. Verified
+    against saved debug frames spanning multiple truck art styles: both
+    misclassified-orange frames from that night, several historically-correct
+    orange/purple accepts, a correctly-rejected plain gray truck, and two
+    gray/blue "D"-badge trucks that were *wrongly* accepted as orange under
+    the old box (background HUD icons within the wider box were miscounted
+    as truck-body orange) — this box correctly rejects those too.
+    """
     return (
-        int(0.10 * h),
+        int(0.27 * h),
         int(0.36 * h),
-        int(0.32 * w),
-        int(0.68 * w),
+        int(0.46 * w),
+        int(0.56 * w),
     )
 
 
@@ -626,6 +644,16 @@ def _sample_picker_color(color: np.ndarray) -> ColorSample:
     classified as "orange" because the code only counted orange pixels without
     checking if gray/white dominated. Now detects gray/white body color and
     rejects orange classification when gray is the main truck body.
+
+    Fix 2026-08-09: thresholds below are fractions of the ROI area, not
+    absolute pixel counts — the ROI got much smaller (see `_picker_roi_box`),
+    so the old absolute floors (min_px=2500, gray/white floor=3500,
+    green floor=1500) no longer meant what they used to. Purple is also now
+    checked *before* the gray/white veto: every cab (orange, purple, or
+    otherwise) has a chunk of chrome grille/bumper/headlights that reads as
+    low-saturation "gray/white" regardless of body paint, so applying that
+    veto ahead of the purple check was blanket-vetoing genuinely purple
+    trucks too (reproduced against saved purple debug frames).
     """
     h, w = color.shape[:2]
     y0, y1, x0, x1 = _picker_roi_box(h, w)
@@ -649,28 +677,39 @@ def _sample_picker_color(color: np.ndarray) -> ColorSample:
 
     total_roi_px = roi.shape[0] * roi.shape[1]
 
+    # Purple checked first: chrome trim (always somewhat "gray/white") must
+    # not veto a genuinely purple cab.
+    min_frac = 0.02  # was min_px=2500 on the old, ~10x larger ROI
+    if p_px >= total_roi_px * min_frac and p_px > o_px * 1.3 and p_px >= g_px:
+        return ColorSample("purple", o_px, p_px, g_px)
+
     # Gray/white body dominates → gray truck with orange accents, never "orange"
     # Real incident 2026-08-08: gray truck with orange cargo bags had 2907 orange
     # pixels but was misclassified as orange. Gray body pixels should veto.
-    if gw_px >= 3500 and gw_px >= o_px * 1.2:
+    gw_floor_frac = 0.03  # was gw_px>=3500 on the old, ~10x larger ROI
+    if gw_px >= total_roi_px * gw_floor_frac and gw_px >= o_px * 1.2:
         log(f"[Trucks] Rejecting as 'other': gray/white body dominates (gw={gw_px} vs o={o_px})")
         return ColorSample("other", o_px, p_px, g_px)
 
     # Green body dominates → gray-green / green truck, never "orange"
-    if g_px >= 1500 and g_px >= o_px * 0.75:
+    green_floor_frac = 0.013  # was g_px>=1500 on the old, ~10x larger ROI
+    if g_px >= total_roi_px * green_floor_frac and g_px >= o_px * 0.75:
         return ColorSample("other", o_px, p_px, g_px)
 
-    min_px = 2500  # was 800 — gold stars alone used to false-trigger
-    if o_px < min_px and p_px < min_px:
+    if o_px < total_roi_px * min_frac and p_px < total_roi_px * min_frac:
         return ColorSample("other", o_px, p_px, g_px)
 
     # Orange must be dominant (not just decorations): require at least 15% of ROI
     # AND significantly more than gray/white pixels
     min_dominance_pct = 0.15
-    if o_px >= min_px and o_px >= total_roi_px * min_dominance_pct and o_px >= p_px * 1.3 and o_px >= max(g_px * 2.0, 1) and o_px >= gw_px * 0.8:
+    if (
+        o_px >= total_roi_px * min_frac
+        and o_px >= total_roi_px * min_dominance_pct
+        and o_px >= p_px * 1.3
+        and o_px >= max(g_px * 2.0, 1)
+        and o_px >= gw_px * 0.8
+    ):
         return ColorSample("orange", o_px, p_px, g_px)
-    if p_px >= min_px and p_px > o_px and p_px >= g_px:
-        return ColorSample("purple", o_px, p_px, g_px)
     return ColorSample("other", o_px, p_px, g_px)
 
 
