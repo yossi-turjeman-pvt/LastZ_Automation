@@ -22,7 +22,6 @@ from lastz.screen import (
     game_window_band_phys,
     physical_to_logical,
 )
-from lastz.stats import format_summary, record_help_clicks
 from lastz.vision import ensure_template_scale, find_template_local
 
 
@@ -61,7 +60,6 @@ def _poll_once(band: list[float], thr: float) -> bool:
                 f"[conf={match.confidence:.4f}]"
             )
             click(click_x, click_y)
-            record_help_clicks(1)
             return True
         return False
     except Exception as region_err:
@@ -84,7 +82,6 @@ def _poll_once(band: list[float], thr: float) -> bool:
                 f"[conf={match.confidence:.4f}]"
             )
             click(cx, cy)
-            record_help_clicks(1)
             return True
         except Exception as full_err:
             raise RuntimeError(
@@ -187,7 +184,6 @@ def run_help_watcher_loop() -> None:
 
         except KeyboardInterrupt:
             log("Help watcher stopped by user.")
-            print(format_summary(include_run=False))
             break
         except GameNotRunningError as e:
             log(f"GAME NOT RUNNING: {e}")

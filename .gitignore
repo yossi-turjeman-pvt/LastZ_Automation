@@ -29,6 +29,4 @@ assets/
 templates/active/_*.png
 templates/active/_*/
 
-# Motivation stats (local ledger — not committed)
-data/motivation_stats.json
 data/

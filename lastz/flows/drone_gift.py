@@ -25,7 +25,6 @@ from lastz.screen import (
     physical_to_logical,
     scale_capture_rect_uniform,
 )
-from lastz.stats import record_claim, record_loot
 from lastz.vision import Match, find_template
 
 _MIN_DURATION_SEC = 8 * 3600
@@ -351,9 +350,6 @@ def run_drone_gift_flow(*, skip_reset: bool = False) -> str:
         time.sleep(1.25)
         color_reward, _ = capture_both()
         loot = parse_congrats_grid(color_reward)
-        if loot:
-            record_loot("drone", loot)
-        record_claim("drone_collect")
 
         dismiss_overlay(delay=1.5)
         dismiss_overlay(delay=1.5)

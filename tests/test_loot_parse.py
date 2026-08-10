@@ -96,8 +96,6 @@ class TestTryClaimAllPopupVerification(unittest.TestCase):
             ("find_any", claim_btn),
             ("click", None),
             ("log_click", None),
-            ("record_claim", None),
-            ("record_loot", None),
             ("dismiss_overlay", None),
         ):
             patcher = patch.object(AG, target, return_value=ret)
@@ -115,7 +113,6 @@ class TestTryClaimAllPopupVerification(unittest.TestCase):
 
         self.assertIn("Claimed All (Instant)", status)
         self.assertIn("speedup_training_1m", status)
-        AG.record_loot.assert_called_once()
 
     def test_unconfirmed_popup_does_not_fabricate_loot(self):
         """The real-incident shape: every attempt reads garbage from the
@@ -127,17 +124,6 @@ class TestTryClaimAllPopupVerification(unittest.TestCase):
 
         self.assertNotIn("loot:", status)
         self.assertIn("unconfirmed", status)
-        AG.record_loot.assert_not_called()
-        # The claim-count stat must not drift ahead of reality either — an
-        # unconfirmed popup means we don't actually know the claim
-        # happened server-side, so don't credit it as one.
-        AG.record_claim.assert_not_called()
-
-    def test_confirmed_popup_records_claim(self):
-        with patch.object(AG, "read_congrats_popup", return_value=(True, {"food": 1.0})):
-            AG._try_claim_all(tab_name="Common")
-
-        AG.record_claim.assert_called_once_with("common_claim_all")
 
     def test_retries_before_confirming(self):
         """Popup renders late (attempt 3) — must not give up after one try."""

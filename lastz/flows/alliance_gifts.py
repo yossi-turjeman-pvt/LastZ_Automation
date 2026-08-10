@@ -23,13 +23,6 @@ from lastz.flows.ui_bands import (
     CLAIM_MAX_Y_FRAC,
 )
 from lastz.heli_priority import HeliInterrupt, check_heli_interrupt
-from lastz.stats import (
-    begin_run_stats,
-    end_run_stats,
-    record_claim,
-    record_donations,
-    record_loot,
-)
 
 _GIFTS_STEPS = ("drone", "battlefield", "alliance_gifts", "techs", "trucks")
 
@@ -247,13 +240,6 @@ def _try_claim_all(*, tab_name: str = "Common") -> str | None:
         # can "succeed" on unrelated background text (see module docstring
         # on read_congrats_popup), which is exactly the bug this guards.
         loot = {}
-    if loot:
-        record_loot("alliance_gifts", loot)
-    claim_key = (
-        "rare_claim_all" if tab_name.lower().startswith("rare") else "common_claim_all"
-    )
-    if popup_confirmed:
-        record_claim(claim_key)
     # Exactly one outside click: closes the reward popup, leaves Gifts open.
     # A second outside click (e.g. before Rare) closes Gifts itself — do not add one.
     print("[Gifts] Dismissing reward popup (single outside click)...")
@@ -295,13 +281,6 @@ def _claim_tab(tab_name: str) -> str:
         claimed += 1
         time.sleep(1.5)
 
-    if claimed:
-        claim_key = (
-            "rare_individual"
-            if tab_name.lower().startswith("rare")
-            else "common_individual"
-        )
-        record_claim(claim_key, claimed)
     return f"Claimed {claimed} individual gifts"
 
 
@@ -556,9 +535,6 @@ def _claim_battlefield_gifts() -> str:
         cfg_threshold("claim_all"),
     )
     if claim_match is not None:
-        if bf_loot:
-            record_loot("battlefield", bf_loot)
-        record_claim("battlefield_claim_all")
         clx, cly = physical_to_logical(claim_match.phys_x, claim_match.phys_y)
         print(f"-> Clicking 'Claim All' at logical ({clx:.1f}, {cly:.1f})...")
         click(clx, cly)
@@ -936,8 +912,6 @@ def _donate_alliance_techs() -> str:
         print(f"[Techs] Donate loop hit max_clicks={max_clicks}")
 
     print(f"[Techs] Done: donated={donated} stop={stop_reason}")
-    if donated:
-        record_donations(donated)
     print("[Techs] Dismissing tech detail modal...")
     dismiss_overlay(delay=1.5)
     print("[Techs] Dismissing Alliance Techs screen...")
@@ -955,7 +929,6 @@ def run_alliance_gifts_flow(
     (one of: drone, battlefield, alliance_gifts, techs, trucks).
     """
     begin_run_logging()
-    begin_run_stats()
     try:
         ensure_game_running()
         log("[Timing] focus_game start")
@@ -1107,5 +1080,4 @@ def run_alliance_gifts_flow(
         dump_crash(exc, prefix="crash_gifts")
         raise
     finally:
-        end_run_stats(print_summary=True)
         end_run_logging()

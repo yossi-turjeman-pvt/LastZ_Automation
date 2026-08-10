@@ -25,7 +25,6 @@ from lastz.flows.base import dismiss_overlay, ensure_wilderness
 from lastz.input import click, press_escape
 from lastz.runlog import log, log_click, log_skip, log_step
 from lastz.screen import capture_both, physical_to_logical
-from lastz.stats import record_claim
 from lastz.vision import Match, find_all_templates, find_template
 
 try:
@@ -1219,8 +1218,6 @@ def run_trucks_flow() -> str:
 
     claimed = _claim_arrived()
     print(f"[Trucks] claimed={claimed}")
-    if claimed:
-        record_claim("trucks_claimed", claimed)
 
     color, gray = capture_both()
     trade_n = _read_trade_count(color)
@@ -1231,7 +1228,5 @@ def run_trucks_flow() -> str:
         return f"claimed={claimed}; day full 4/4"
 
     send_status = _send_upper_truck(allow_purple, max_refreshes)
-    if send_status.startswith("sent:"):
-        record_claim("trucks_sent")
     _exit_trucks()
     return f"claimed={claimed}; {send_status}"

@@ -190,7 +190,6 @@ Templates are captured on built-in Retina (3024×1964 capture, 1512×982 window)
 
 - `logs/.template_scale_cache.json` - disk cache for template scale (keyed by resolution)
 - `logs/.trucks_state.json` - learned truck row positions (prevents double-send on hidden rows)
-- `data/motivation_stats.json` - monthly loot ledger
 
 ## Common Tasks
 

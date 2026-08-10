@@ -115,11 +115,6 @@ drone_gift:
 watcher:
   alliance_interval_sec: 180   # seconds between claim runs in menu option 2
 
-# Motivation stats — itemized loot ledger (Alliance Gifts / Battlefield / Drone)
-stats:
-  enabled: true
-  path: data/motivation_stats.json
-
 # Helicopter (Explore Treasure) — priority over gifts in watcher (menu 2)
 helicopter:
   enabled: false

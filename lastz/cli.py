@@ -14,9 +14,8 @@ def _header() -> None:
     print(" 2. Watcher loop (claim on interval + Heli priority)")
     print(" 3. Fix Hebrew (CrossOver) — one-time setup")
     print(" 4. Help watcher (handshake blink clicker)")
-    print(" 5. Show stats (motivation ledger)")
-    print(" 6. Helicopter monitor (BR watch + heli flow)")
-    print(" 7. Exit")
+    print(" 5. Helicopter monitor (BR watch + heli flow)")
+    print(" 6. Exit")
     print("=" * 60)
 
 
@@ -24,7 +23,7 @@ def main() -> None:
     while True:
         _header()
         try:
-            choice = input("Enter your choice (1-7): ").strip()
+            choice = input("Enter your choice (1-6): ").strip()
         except KeyboardInterrupt:
             print("\nExiting. Goodbye!")
             break
@@ -60,21 +59,15 @@ def main() -> None:
             run_help_watcher_loop()
 
         elif choice == "5":
-            from lastz.stats import print_month_stats
-            print()
-            print_month_stats()
-            print()
-
-        elif choice == "6":
             print("\n>>> Helicopter monitor — watches BR heli indication...")
             print("    Ctrl+C returns to this menu.\n")
             from lastz.flows.helicopter import run_helicopter_monitor_loop
             run_helicopter_monitor_loop()
 
-        elif choice == "7":
+        elif choice == "6":
             print("Exiting. Goodbye!")
             break
 
         else:
-            print("Invalid choice. Please enter a number between 1 and 7.")
+            print("Invalid choice. Please enter a number between 1 and 6.")
             time.sleep(1)

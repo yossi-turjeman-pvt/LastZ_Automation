@@ -28,7 +28,6 @@ from lastz.heli_priority import (
 )
 from lastz.input import GameNotRunningError
 from lastz.runlog import dump_crash
-from lastz.stats import format_summary
 
 
 def _log_path() -> Path:
@@ -134,7 +133,6 @@ def run_watcher_loop() -> None:
 
             except KeyboardInterrupt:
                 log("Watcher stopped by user.")
-                print(format_summary(include_run=False))
                 break
             except GameNotRunningError as e:
                 log(f">>> GAME NOT RUNNING: {e}")
