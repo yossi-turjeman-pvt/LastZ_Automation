@@ -29,6 +29,34 @@ thresholds:
   drone_gift_chest: 0.58
   drone_claim_btn: 0.55
   drone_collect_btn: 0.55
+  # Farm resource badges — clicking ANY ONE of these (round/accumulating OR
+  # the teardrop/pin "full" marker) collects every farm building's
+  # production across the whole base, all six resource types at once —
+  # confirmed live 2026-08-11 via precise before/after screenshot diff (see
+  # lastz/flows/farm_resources.py module docstring). So only one match of
+  # any kind is needed per cycle; these thresholds exist purely to keep
+  # each individual template's false-positive rate low, not because the
+  # specific type/state matters.
+  farm_food_full: 0.75
+  farm_wood_full: 0.75
+  farm_exp_full: 0.75
+  farm_electricity_full: 0.75
+  farm_alloy_full: 0.75
+  # zent's pin is gold-on-gold (low contrast vs. food/exp's orange-pin-on-
+  # green-coin) — a small, low-detail template, so it needs a higher floor.
+  # At 0.75 it missed the true match entirely (peak-cap truncation from a
+  # flood of generic weak matches on other round HUD icons before the real
+  # scale/position was ever reached) and returned scattered false positives
+  # in the 0.65-0.79 range instead. 0.82 cleanly isolates the real 6 pins
+  # (conf 0.85-0.89) with nothing surviving from the noise band below.
+  farm_zent_full: 0.82
+  # Round (not-full, still-accumulating) EXP badge — EXP produces fast
+  # enough to be reliably visible almost every cycle, so this is the
+  # primary "is there anything to click" trigger; the full-state templates
+  # above are secondary/fallback. Verified live: 1 true match at conf 1.0,
+  # zero false positives at 0.75 (0.70 picks up ~7 false positives on
+  # unrelated terrain/tree detail).
+  farm_exp_round: 0.75
   trucks_icon: 0.72
   trucks_my_truck_tab: 0.65
   trucks_claim_chest: 0.70
@@ -111,6 +139,34 @@ drone_gift:
   - 730
   - 1200
   - 130
+
+# HQ farm resource collection (runs right after Drone in menu 2 watcher).
+# Zooms out + pans a "plus" grid (center + 4 cardinal directions) around the
+# HQ map looking for a full/ready badge per resource type; clicking any one
+# full badge of a type collects every building of that type at once (VIP6+).
+farm_resources:
+  enabled: true
+  map_drag_origin: [0.5, 0.42]  # fraction of window (fx, fy) — pan/zoom anchor
+  zoom:
+    out_steps: 4
+    delta_per_step: -3          # negative = zoom out (scroll_wheel convention)
+    step_delay_sec: 0.25
+    settle_sec: 1.5
+  # Reference-resolution logical-pixel deltas (scaled to the live window via
+  # scale_ref_logical_delta); center + 4 cardinal pans is the starting point,
+  # not a claim it's sufficient for every base — widen here, not in code, if
+  # a base needs wider coverage.
+  pan_swipes: [[0, -260], [260, 0], [0, 260], [-260, 0]]
+  pan_settle_sec: 1.0
+  # HUD exclusion fractions layered on top of BAND_HQ_MAP (top resource bar,
+  # bottom hero/chat bar, side icon columns).
+  hud_exclude:
+    top_frac: 0.08
+    bottom_frac: 0.12
+    left_frac: 0.02
+    right_frac: 0.07
+  dedupe_radius_px: 80          # cluster_matches radius for multi-scale dedup
+  post_click_settle_sec: 1.5
 
 watcher:
   alliance_interval_sec: 180   # seconds between claim runs in menu option 2

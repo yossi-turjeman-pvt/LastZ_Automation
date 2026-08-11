@@ -81,19 +81,22 @@ In order:
 1. **HQ Drone Gift (Area Exploration idle reward)**  
    Goes to Headquarters, reads the timer under the gift chest, and collects only if duration ≥ `drone_gift.min_duration` (default **08:00:00**). Then returns to Wilderness. Skips if the chest is missing (cooldown), the timer is lower, or OCR fails.
 
-2. **Battlefield Gifts**  
+2. **HQ Farm Resources** (when `farm_resources.enabled` is true — default)  
+   Still in Headquarters. Zooms out and pans a "plus" pattern (center + 4 cardinal directions) around the base looking for **any single** farm resource badge — round (still accumulating) or the teardrop/pin "full" marker, any of food/wood/exp/electricity/enhancement alloy/zent. Clicking **one** badge, in **any** state, collects **every** farm building's production across the **whole base, all resource types at once** — confirmed live via before/after screenshot comparison (see `lastz/flows/farm_resources.py`'s module docstring). So the flow stops at the first match found; it never needs to wait for a "full" badge specifically or visit more than one spot. Skips cleanly if nothing is found this cycle. Camera position/zoom is restored before returning to Wilderness.
+
+3. **Battlefield Gifts**  
    If the orange wilderness chest icon is visible, opens it and Claim All. Skips if the icon is not on screen.
 
-3. **Alliance Gifts — Common**  
+4. **Alliance Gifts — Common**  
    Opens Alliance → Alliance Gifts → Common tab. Uses **Claim All** when present (one outside click to clear the reward popup), otherwise individual green **Claim** buttons.
 
-4. **Alliance Gifts — Rare**  
+5. **Alliance Gifts — Rare**  
    Switches to the Rare tab and claims the same way (Claim All if present, else green Claims).
 
-5. **Alliance Techs — gold Donate**  
+6. **Alliance Techs — gold Donate**  
    Opens Alliance Techs, picks a recommended tech (orange thumbs-up) or a lit hex, then clicks the **blue** Donate button until it is no longer blue / available (capped by `alliance_techs.max_donates`).
 
-6. **Trucks** (when `trucks.include_trucks_flow` is true — default)  
+7. **Trucks** (when `trucks.include_trucks_flow` is true — default)  
    Opens only if the left-HUD truck icon has a **red badge**, or on every **`open_every_n_runs`** gifts run (default **5**). Then: **My Truck** → claim arrived chest → if under **4/4**, **discover all tracks** on the highway → act on **only the uppermost**; if that track is empty, open picker → if not orange, **Refresh** → **Confirm** Tips (refresh away from purple) → repeat until orange (unless `allow_purple_trucks`) → **Go only when color matches** (Go conf ≥ 0.92). If upper is occupied → **leave it** (never click lower `+`). **One truck at a time.**
 
 ### What it does **not** collect
@@ -102,7 +105,6 @@ These are **out of scope** for the current bot (removed or never part of this sl
 
 - Achievements / quest rewards / daily login calendars  
 - Bounties / wanted / hunt boards  
-- HQ building floating resources (food, wood, energy, gold, EXP pickups)  
 - Mail / inbox claims  
 - Scouting / exploration map loops (beyond the single HQ drone idle chest)  
 - Alliance Wars, Shop, or other Alliance tiles (Help is menu **4** only — blink icon click, not the Help list UI)  
@@ -125,6 +127,9 @@ trucks:
   include_trucks_flow: true
   allow_purple_trucks: false
   open_every_n_runs: 5
+farm_resources:
+  enabled: true
+  pan_swipes: [[0, -260], [260, 0], [0, 260], [-260, 0]]
 coordinates:
   dismiss_outside_frac: [0.06, 0.28]
 ```
@@ -147,6 +152,7 @@ LastZ_Automation/
 │   └── flows/
 │       ├── alliance_gifts.py
 │       ├── drone_gift.py
+│       ├── farm_resources.py
 │       ├── trucks.py
 │       ├── help_watcher.py  # Menu 4 handshake blink clicker
 │       ├── hq_nav.py
@@ -218,6 +224,20 @@ All of these live in [`config.yaml`](config.yaml). Restart / re-run the menu aft
 | `drone_gift.timer_crop_offset` | `[dx,dy,w,h]` | Timer crop relative to chest match (scaled at runtime) |
 | `drone_gift.modal_timer_region` | `[x,y,w,h]` | Idle Reward modal timer region (scaled at runtime) |
 
+### HQ Farm Resources
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `farm_resources.enabled` | `true` | `false` = skip the farm-collection step entirely |
+| `farm_resources.map_drag_origin` | `[0.5, 0.42]` | Pan/zoom anchor as a fraction of the game window |
+| `farm_resources.zoom.out_steps` | `4` | Scroll-wheel steps to zoom out before scanning (zoomed back in afterward) |
+| `farm_resources.pan_swipes` | `[[0,-260],[260,0],[0,260],[-260,0]]` | Reference-resolution pan deltas ("plus" pattern: center + 4 cardinal directions), scaled to the live window |
+| `farm_resources.pan_settle_sec` | `1.0` | Settle time after each pan/zoom step |
+| `farm_resources.hud_exclude` | `top/bottom/left/right_frac` | HUD chrome to exclude from badge search (resource bar, hero/chat bar, side icon stacks) |
+| `farm_resources.dedupe_radius_px` | `80` | Radius for collapsing near-duplicate multi-scale matches of the same badge |
+
+**One click collects everything** — clicking any single farm badge (round or full, any resource type) collects every farm building's production across the whole base, confirmed live via before/after screenshot comparison. So the flow just needs to recognize *any one* badge, not every type. It currently knows `farm_exp_round.png` (a round, still-accumulating EXP badge — reliably visible almost every cycle since EXP produces fast) plus the three full/pin templates captured earlier (`farm_exp_full.png`, `farm_food_full.png`, `farm_zent_full.png`). More templates (round or full, any type) can be added purely to raise the odds of finding *something* to click quickly — never because that specific type "needs" its own collection.
+
 ### Alliance Techs
 
 | Flag | Default | Purpose |
@@ -265,6 +285,13 @@ All of these live in [`config.yaml`](config.yaml). Restart / re-run the menu aft
 | `thresholds.drone_gift_chest` | `0.58` | HQ drone gift chest |
 | `thresholds.drone_claim_btn` | `0.55` | Drone Claim |
 | `thresholds.drone_collect_btn` | `0.55` | Drone Collect |
+| `thresholds.farm_food_full` | `0.75` | Food farm full/ready pin badge |
+| `thresholds.farm_wood_full` | `0.75` | Wood farm full/ready pin badge |
+| `thresholds.farm_exp_full` | `0.75` | EXP farm full/ready pin badge |
+| `thresholds.farm_exp_round` | `0.75` | EXP farm round (not-full) badge — primary "anything to click" trigger |
+| `thresholds.farm_electricity_full` | `0.75` | Electricity farm full/ready pin badge |
+| `thresholds.farm_alloy_full` | `0.75` | Enhancement alloy farm full/ready pin badge |
+| `thresholds.farm_zent_full` | `0.82` | Zent farm full/ready pin badge (higher floor — gold-on-gold pin is low-contrast, needs it to avoid false positives) |
 | `thresholds.trucks_icon` | `0.72` | Left-HUD trucks icon |
 | `thresholds.trucks_my_truck_tab` | `0.65` | My Truck tab |
 | `thresholds.trucks_claim_chest` | `0.70` | Arrived-truck claim chest |

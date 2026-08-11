@@ -26,3 +26,13 @@ BAND_HELI_BR = (0.55, 0.95, 0.78, 1.0)
 BAND_HELI_FORMATIONS = (0.40, 0.80, 0.50, 0.66)
 # Center map for heli / search / prize
 BAND_HELI_CENTER = (0.20, 0.80, 0.30, 0.75)
+
+# HQ base viewport (farm resource badges) — excludes the top resource-count
+# HUD bar (~yf 0-0.06) and the bottom hero/chat bar (~yf 0.90+). Full width:
+# the base's diamond viewport spans nearly edge-to-edge on ultrawide displays.
+# Narrower per-side HUD icon stacks (left VIP column, right Alliance/Mail/
+# Warehouse stack) are trimmed separately by farm_resources.py's configurable
+# hud_exclude rects, not baked in here — this band is the coarse sanity check.
+# Verified against a real false-positive: a farm_exp_full.png match on an
+# unrelated top-right HUD icon at yf~0.045 is correctly excluded by this band.
+BAND_HQ_MAP = (0.06, 0.90, 0.0, 1.0)

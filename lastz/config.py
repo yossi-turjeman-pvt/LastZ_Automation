@@ -115,6 +115,44 @@ def trucks_cfg() -> dict:
     }
 
 
+def farm_resources_cfg() -> dict:
+    """HQ farm resource collection flow toggles (zoom-out + pan scan)."""
+    cfg = load_config().get("farm_resources") or {}
+
+    origin = cfg.get("map_drag_origin") or [0.5, 0.42]
+    if len(origin) < 2:
+        origin = [0.5, 0.42]
+
+    zoom = cfg.get("zoom") or {}
+
+    swipes_raw = cfg.get("pan_swipes") or [[0, -260], [260, 0], [0, 260], [-260, 0]]
+    pan_swipes = []
+    for s in swipes_raw:
+        if len(s) >= 2:
+            pan_swipes.append([float(s[0]), float(s[1])])
+    if not pan_swipes:
+        pan_swipes = [[0.0, -260.0], [260.0, 0.0], [0.0, 260.0], [-260.0, 0.0]]
+
+    hud = cfg.get("hud_exclude") or {}
+
+    return {
+        "enabled": bool(cfg.get("enabled", True)),
+        "map_drag_origin": [float(origin[0]), float(origin[1])],
+        "zoom_out_steps": max(0, int(zoom.get("out_steps", 4))),
+        "zoom_delta_per_step": float(zoom.get("delta_per_step", -3)),
+        "zoom_step_delay_sec": float(zoom.get("step_delay_sec", 0.25)),
+        "zoom_settle_sec": float(zoom.get("settle_sec", 1.5)),
+        "pan_swipes": pan_swipes,
+        "pan_settle_sec": float(cfg.get("pan_settle_sec", 1.0)),
+        "hud_top_frac": float(hud.get("top_frac", 0.08)),
+        "hud_bottom_frac": float(hud.get("bottom_frac", 0.12)),
+        "hud_left_frac": float(hud.get("left_frac", 0.02)),
+        "hud_right_frac": float(hud.get("right_frac", 0.07)),
+        "dedupe_radius_px": float(cfg.get("dedupe_radius_px", 80)),
+        "post_click_settle_sec": float(cfg.get("post_click_settle_sec", 1.5)),
+    }
+
+
 def help_watcher_cfg() -> dict:
     """Help blink-clicker poll + search band (yf0, yf1, xf0, xf1)."""
     cfg = load_config().get("help_watcher") or {}

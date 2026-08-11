@@ -13,6 +13,7 @@ from lastz.config import load_config, threshold as cfg_threshold
 from lastz.debug_match import annotate_and_save, in_band
 from lastz.flows.base import dismiss_overlay, ensure_wilderness, reset_ui
 from lastz.flows.drone_gift import run_drone_gift_flow
+from lastz.flows.farm_resources import run_farm_resources_flow
 from lastz.flows.loot_parse import parse_battle_rewards, read_congrats_popup
 from lastz.flows.trucks import run_trucks_flow
 from lastz.flows.ui_bands import (
@@ -24,7 +25,7 @@ from lastz.flows.ui_bands import (
 )
 from lastz.heli_priority import HeliInterrupt, check_heli_interrupt
 
-_GIFTS_STEPS = ("drone", "battlefield", "alliance_gifts", "techs", "trucks")
+_GIFTS_STEPS = ("drone", "farm", "battlefield", "alliance_gifts", "techs", "trucks")
 
 
 def _step_reached(step: str, start_at: str | None) -> bool:
@@ -967,6 +968,26 @@ def run_alliance_gifts_flow(
                 log_step("Wilderness", "pass", map_status)
 
             _guarded_step("Drone", _do_drone)
+
+        if _step_reached("farm", start_at):
+            def _do_farm():
+                _heli_checkpoint(source, "farm")
+                log_step("Farm", "info", "start")
+                farm_status = run_farm_resources_flow(skip_reset=True)
+                log(f"[Farm] result: {farm_status}")
+                if farm_status.startswith("Collected"):
+                    log_step("Farm", "pass", farm_status)
+                else:
+                    # No hard-failure path here (unlike Drone's OCR gating) —
+                    # "nothing full yet" / "not in HQ mode" are both normal,
+                    # expected outcomes, not exceptions. A raised exception
+                    # still reaches _guarded_step's except-block below.
+                    log_step("Farm", "skip", farm_status)
+
+                map_status = ensure_wilderness()
+                log_step("Wilderness", "pass", map_status)
+
+            _guarded_step("Farm", _do_farm)
 
         if _step_reached("battlefield", start_at):
             def _do_battlefield():
